@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code ログビュワー</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app" id="app">
+  <aside class="sidebar">
+    <div class="search-box">
+      <input id="q" type="search" placeholder="全文検索" autocomplete="off">
+      <div class="side-actions">
+        <button id="open-search" class="side-btn">詳細検索</button>
+        <button id="bm-only" class="side-btn bm-toggle" title="ブックマークしたセッションだけ">★</button>
+        <span id="side-count" class="side-count"></span>
+        <button id="reload" class="reload side-btn" title="一覧と表示中のセッションを読み直す (R)">再読み込み</button>
+      </div>
+    </div>
+    <div id="chips" class="chips"></div>
+    <ol id="list" class="session-list compact"></ol>
+  </aside>
+  <div class="handle handle-x" data-pane="sidebar" title="ドラッグで幅を変更・ダブルクリックで元に戻す">
+    <button class="pane-btn" data-collapse="sidebar"></button>
+  </div>
+
+  <main class="main" id="main">
+    <div class="empty" id="empty">左の一覧からセッションを選んでください</div>
+
+    <section class="search-view" id="search-view" hidden>
+      <header class="sv-head">
+        <h2>詳細検索</h2>
+        <button id="close-search">閉じる</button>
+      </header>
+      <div class="sv-form">
+        <input id="sv-q" type="search" placeholder="全文検索　例: &quot;context canceled&quot; ebisu -test" autocomplete="off">
+        <div class="search-help">スペース区切りで AND、"…" でフレーズ、先頭に - で除外。ユーザーの発言・返答・思考・ツールの入力と結果・サブエージェントまで探します</div>
+        <div class="sv-row">
+          <label>期間 <input id="from" type="date"> 〜 <input id="to" type="date"></label>
+          <label class="sv-path">ファイル
+            <input id="path" list="path-list" placeholder="パスの一部（ディレクトリも可）" autocomplete="off">
+            <select id="pathMode">
+              <option value="any">読み書き</option>
+              <option value="read">読んだ</option>
+              <option value="write">書いた</option>
+            </select>
+          </label>
+          <datalist id="path-list"></datalist>
+          <label>並び順
+            <select id="sort">
+              <option value="end">最終更新が新しい順</option>
+              <option value="start">開始が新しい順</option>
+              <option value="hits">検索語の出現数順</option>
+            </select>
+          </label>
+          <label class="sv-check"><input type="checkbox" id="sv-bm"> ブックマークだけ</label>
+          <label class="sv-check" title="/usage のようなローカルコマンドだけで、Claude の返答が無いセッション"><input type="checkbox" id="sv-empty"> 返答の無いセッションも出す</label>
+        </div>
+        <div id="sv-chips" class="chips"></div>
+      </div>
+      <div class="sv-body">
+        <div class="sv-facets" id="facets"></div>
+        <div class="sv-results">
+          <div class="sv-count" id="count"></div>
+          <ol id="cards" class="session-list cards"></ol>
+        </div>
+      </div>
+    </section>
+
+    <div class="session" id="session" hidden>
+      <header class="session-head" id="session-head"></header>
+      <div class="handle handle-y" data-pane="head" title="ドラッグで高さを変更・ダブルクリックで元に戻す">
+        <button class="pane-btn" data-collapse="head"></button>
+      </div>
+      <div class="toolbar">
+        <div class="tb-title">
+          <button class="bm-btn" id="tb-bm"></button>
+          <span class="tb-title-text" id="tb-title-text"></span>
+          <button class="pane-btn-inline" data-collapse="head"></button>
+        </div>
+        <div class="toggles" id="toggles"></div>
+        <div class="find">
+          <button id="reload-session" class="reload" title="一覧と表示中のセッションを読み直す (R)">再読み込み</button>
+          <input id="find" type="search" placeholder="セッション内を検索" autocomplete="off">
+          <span id="find-count" class="find-count"></span>
+          <button id="find-prev" title="前へ (Shift+Enter)">↑</button>
+          <button id="find-next" title="次へ (Enter)">↓</button>
+        </div>
+      </div>
+      <div class="session-body">
+        <div class="events" id="events"></div>
+        <div class="handle handle-x" data-pane="toc" title="ドラッグで幅を変更・ダブルクリックで元に戻す">
+          <button class="pane-btn" data-collapse="toc"></button>
+        </div>
+        <nav class="toc" id="toc"></nav>
+      </div>
+    </div>
+  </main>
+</div>
+<script src="app.js" type="module"></script>
+</body>
+</html>
