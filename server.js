@@ -28,6 +28,17 @@ function filters(params) {
 // DNS リバインディングで外部のページから API を読まれないように、Host がループバックのときだけ応える
 const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
 
+// fs.watch は macOS のサンドボックス内で EMFILE になるなど環境によって使えないので、更新時刻を見に行く。
+// 変わっていなければ 1,000 セッションほどで十数ミリ秒
+const POLL_MS = 2000;
+const listeners = new Set();
+setInterval(() => {
+  const ids = refresh();
+  if (!ids.length) return;
+  const msg = `data: ${JSON.stringify({ ids })}\n\n`;
+  for (const res of listeners) res.write(msg);
+}, POLL_MS);
+
 const server = http.createServer((req, res) => {
   if (!ALLOWED_HOSTS.has(req.headers.host ?? '')) {
     res.writeHead(403);
@@ -35,6 +46,13 @@ const server = http.createServer((req, res) => {
   }
   const url = new URL(req.url, `http://${req.headers.host}`);
   try {
+    if (url.pathname === '/api/events') {
+      res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store' });
+      res.write('retry: 3000\n\n');
+      listeners.add(res);
+      req.on('close', () => listeners.delete(res));
+      return;
+    }
     if (url.pathname === '/api/sessions') return json(res, 200, search(filters(url.searchParams)));
     if (url.pathname === '/api/paths') {
       return json(res, 200, suggestPaths(url.searchParams.get('q'), url.searchParams.get('mode') ?? 'any'));
