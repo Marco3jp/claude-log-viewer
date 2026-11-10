@@ -291,6 +291,8 @@ async function openSession(id, { reload = false } = {}) {
   const data = await res.json();
   const box = $('events');
   const scroll = box.scrollTop;
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  const prevMark = markIndex;
   const openIds = new Set([...box.querySelectorAll('details.tool[open]')].map((d) => d.dataset.id));
   current = data;
   renderHead(data);
@@ -300,7 +302,13 @@ async function openSession(id, { reload = false } = {}) {
     // 開いていたツールの中身を先に描いておかないと、高さが変わって読んでいた位置からずれる
     for (const d of box.querySelectorAll('details.tool')) if (openIds.has(d.dataset.id)) openTool(d);
     runFind(false);
-    box.scrollTop = scroll;
+    if (prevMark >= 0 && marks.length) {
+      markIndex = Math.min(prevMark, marks.length - 1);
+      marks[markIndex].classList.add('current');
+      $('find-count').textContent = `${markIndex + 1} / ${marks.length}${$('find-count').textContent.match(/（.*）/)?.[0] ?? ''}`;
+    }
+    // 末尾を読んでいたら、書き込み中のセッションの続きを追えるように末尾に付いていく
+    box.scrollTop = atBottom ? box.scrollHeight : scroll;
     updateTocActive();
     return;
   }
@@ -318,6 +326,37 @@ async function reloadAll() {
   } finally {
     btns.forEach((b) => { b.disabled = false; });
   }
+}
+
+// ---------- 自動の読み直し ----------
+const live = { list: false, session: false, busy: false };
+
+async function runLive() {
+  if (live.busy || document.hidden || !(live.list || live.session)) return;
+  live.busy = true;
+  const { list, session } = live;
+  live.list = false;
+  live.session = false;
+  try {
+    if (list) await loadList();
+    if (session && state.s) await openSession(state.s, { reload: true });
+  } catch (e) {
+    console.error(e);
+  } finally {
+    live.busy = false;
+    runLive();
+  }
+}
+
+function watchChanges() {
+  const es = new EventSource('/api/events');
+  es.addEventListener('message', (e) => {
+    const { ids } = JSON.parse(e.data);
+    live.list = true;
+    if (state.s && ids.includes(state.s)) live.session = true;
+    runLive();
+  });
+  document.addEventListener('visibilitychange', runLive);
 }
 
 function renderHead(d) {
@@ -804,6 +843,7 @@ function bind() {
   showView(view === 'search' ? 'search' : state.s ? 'session' : 'empty');
   if (view === 'search') $('sv-q').value = state.q;
   loadList().then(() => { if (state.s) openSession(state.s); });
+  watchChanges();
 }
 
 bind();
