@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { refresh, search, suggestPaths, sessionDetail, agentEvents, getSession, PROJECTS_DIR } from './lib/index.js';
 import { setBookmark } from './lib/bookmarks.js';
+import { getMemo, setMemo, MEMO_MAX } from './lib/memos.js';
 import { send, answer, stop, stopAll, runnerState, openElsewhere, onRunnerChange } from './lib/runner.js';
 
 const PORT = Number(process.env.PORT) || 4317;
@@ -85,6 +86,21 @@ async function handleRunner(req, res, url) {
 // fs.watch は macOS のサンドボックス内で EMFILE になるなど環境によって使えないので、更新時刻を見に行く。
 // 変わっていなければ 1,000 セッションほどで十数ミリ秒
 const POLL_MS = 2000;
+async function handleMemo(req, res, url) {
+  if (req.method === 'GET') {
+    const m = getMemo(url.searchParams.get('id') ?? '');
+    return m ? json(res, 200, m) : json(res, 400, { error: 'id が正しくありません' });
+  }
+  if (req.method !== 'POST') return json(res, 405, { error: 'GET or POST only' });
+  if (!(req.headers['content-type'] ?? '').startsWith('application/json')) return json(res, 415, { error: 'application/json only' });
+  const body = await readJson(req);
+  const id = String(body.id ?? '');
+  const text = String(body.text ?? '');
+  if (!getSession(id)) return json(res, 404, { error: 'not found' });
+  if (text.length > MEMO_MAX) return json(res, 413, { error: 'メモが長すぎます' });
+  return json(res, 200, setMemo(id, text));
+}
+
 const listeners = new Set();
 setInterval(() => {
   const ids = refresh();
@@ -109,6 +125,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   try {
     if (url.pathname === '/api/runner' || url.pathname.startsWith('/api/runner/')) return await handleRunner(req, res, url);
+    if (url.pathname === '/api/memo') return await handleMemo(req, res, url);
     if (url.pathname === '/api/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store' });
       res.write('retry: 3000\n\n');

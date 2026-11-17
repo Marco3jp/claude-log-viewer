@@ -290,6 +290,7 @@ async function openSession(id, { reload = false } = {}) {
     runner = null;
     renderRunner();
   }
+  if (!reload && memo.id !== id) loadMemo(id);
   state.s = id;
   writeHash();
   loadRunner(id);
@@ -305,7 +306,6 @@ async function openSession(id, { reload = false } = {}) {
   current = data;
   renderHead(data);
   renderEvents(box, data.events, data.session.cwd);
-  renderToc();
   if (reload) {
     // 開いていたツールの中身を先に描いておかないと、高さが変わって読んでいた位置からずれる
     for (const d of box.querySelectorAll('details.tool')) if (openIds.has(d.dataset.id)) openTool(d);
@@ -317,7 +317,6 @@ async function openSession(id, { reload = false } = {}) {
     }
     // 末尾を読んでいたら、書き込み中のセッションの続きを追えるように末尾に付いていく
     box.scrollTop = atBottom ? box.scrollHeight : scroll;
-    updateTocActive();
     return;
   }
   box.scrollTop = 0;
@@ -549,42 +548,13 @@ function renderEvent(ev, cwd) {
 function renderEvents(container, events, cwd, nested = false) {
   const frag = document.createDocumentFragment();
   const items = [];
-  let prompt = -1;
   for (const ev of events) {
     const el = renderEvent(ev, cwd);
-    if (ev.kind === 'user' && !nested) {
-      prompt++;
-      el.id = `p${prompt}`;
-    }
-    items.push({ ev, el, text: searchableText(ev), prompt });
+    items.push({ ev, el, text: searchableText(ev) });
     frag.append(el);
   }
   container.replaceChildren(frag);
   if (!nested) container._items = items;
-}
-
-function renderToc() {
-  const items = $('events')._items ?? [];
-  const links = items.filter((x) => x.ev.kind === 'user').map((x) => {
-    const a = h('a', { href: `#${x.el.id}`, onclick: (e) => { e.preventDefault(); x.el.scrollIntoView({ block: 'start' }); } },
-      h('div', { class: 't' }, h('span', {}, fmtTime(x.ev.ts)), h('span', { class: 'hits' })),
-      h('div', { class: 'p' }, (x.ev.text ?? '').slice(0, 120)));
-    a.dataset.p = x.prompt;
-    return a;
-  });
-  $('toc').replaceChildren(h('h3', {}, `プロンプト ${links.length} 件`), ...links);
-}
-
-function updateTocActive() {
-  const box = $('events');
-  const items = (box._items ?? []).filter((x) => x.ev.kind === 'user');
-  const top = box.getBoundingClientRect().top + 40;
-  let active = null;
-  for (const x of items) {
-    if (x.el.getBoundingClientRect().top <= top) active = x.prompt;
-    else break;
-  }
-  for (const a of $('toc').querySelectorAll('a')) a.classList.toggle('active', Number(a.dataset.p) === active);
 }
 
 // ---------- セッション内検索 ----------
@@ -629,22 +599,16 @@ function runFind(jump) {
   clearMarks(box);
   let matched = 0;
   let hidden = 0;
-  const perPrompt = new Map();
   for (const x of items) {
     const hit = findTerms.length > 0 && findTerms.some((t) => x.text.includes(t));
     if (!hit) continue;
     matched++;
     if (getComputedStyle(x.el).display === 'none') { hidden++; continue; }
-    perPrompt.set(x.prompt, (perPrompt.get(x.prompt) ?? 0) + 1);
     if (x.el._details && !x.el._details.open && matched <= OPEN_LIMIT) openTool(x.el._details);
     highlight(x.el, findTerms);
   }
   marks = [...box.querySelectorAll('mark')].filter((m) => m.offsetParent !== null);
   markIndex = -1;
-  for (const a of $('toc').querySelectorAll('a')) {
-    const n = perPrompt.get(Number(a.dataset.p));
-    a.querySelector('.hits').textContent = n ? `${n} 件` : '';
-  }
   const hiddenNote = hidden ? `（非表示の中に ${hidden} 件）` : '';
   $('find-count').textContent = findTerms.length ? `${marks.length} 件${hiddenNote}` : '';
   if (jump && marks.length) moveMark(1);
@@ -809,6 +773,76 @@ async function stopRunner() {
   }
 }
 
+// ---------- メモ ----------
+const MEMO_SAVE_MS = 800;
+const memo = { id: null, timer: null, seq: 0 };
+
+function memoStatus(text) {
+  $('memo-status').textContent = text;
+}
+
+async function saveMemo(id, text) {
+  clearTimeout(memo.timer);
+  memo.timer = null;
+  try {
+    const m = await postJson('/api/memo', { id, text });
+    if (memo.id === id) memoStatus(m.updatedAt ? `${fmtTime(m.updatedAt, false)} に保存` : '');
+  } catch (e) {
+    if (memo.id === id) memoStatus(`保存できませんでした: ${e.message}`);
+  }
+}
+
+function flushMemo({ keepalive = false } = {}) {
+  if (!memo.timer || !memo.id) return;
+  clearTimeout(memo.timer);
+  memo.timer = null;
+  const body = JSON.stringify({ id: memo.id, text: $('memo-text').value });
+  // ページを閉じるときは、閉じたあとも送り終えられるように keepalive で送る
+  if (keepalive) fetch('/api/memo', { method: 'POST', keepalive: true, headers: { 'content-type': 'application/json' }, body });
+  else saveMemo(memo.id, $('memo-text').value);
+}
+
+async function loadMemo(id) {
+  flushMemo();
+  memo.id = id;
+  const seq = ++memo.seq;
+  const box = $('memo-text');
+  box.value = '';
+  box.disabled = true;
+  memoStatus('読み込み中…');
+  try {
+    const res = await fetch(`/api/memo?id=${encodeURIComponent(id)}`);
+    if (seq !== memo.seq) return;
+    const m = await res.json();
+    if (!res.ok) throw new Error(m.error ?? `HTTP ${res.status}`);
+    box.value = m.text;
+    memoStatus(m.updatedAt ? `${fmtTime(m.updatedAt)} に保存` : '');
+  } catch (e) {
+    if (seq === memo.seq) memoStatus(`読み込めませんでした: ${e.message}`);
+  } finally {
+    if (seq === memo.seq) box.disabled = false;
+  }
+}
+
+function onMemoInput() {
+  if (!memo.id) return;
+  const id = memo.id;
+  memoStatus('未保存');
+  clearTimeout(memo.timer);
+  memo.timer = setTimeout(() => saveMemo(id, $('memo-text').value), MEMO_SAVE_MS);
+}
+
+// 選択した部分、選択が無ければ全部を、送信の入力欄の末尾に写す
+function memoToComposer() {
+  const t = $('memo-text');
+  const picked = (t.selectionStart !== t.selectionEnd ? t.value.slice(t.selectionStart, t.selectionEnd) : t.value).trim();
+  if (!picked) return;
+  const msg = $('msg');
+  msg.value = msg.value.trim() ? `${msg.value.trimEnd()}\n${picked}` : picked;
+  msg.focus();
+  msg.setSelectionRange(msg.value.length, msg.value.length);
+}
+
 // ---------- 表示切り替え ----------
 function loadToggles() {
   try {
@@ -856,10 +890,10 @@ function renderToggles() {
 }
 
 // ---------- ペインの大きさ ----------
-// sign は、ドラッグした向きと大きさが増える向きが逆のとき -1（目次は左へ引くと広がる）
+// sign は、ドラッグした向きと大きさが増える向きが逆のとき -1（メモは左へ引くと広がる）
 const PANES = {
   sidebar: { prop: '--sidebar-w', axis: 'x', min: 240, sign: 1, el: () => document.querySelector('.sidebar'), btn: ['‹', '›'], label: '一覧' },
-  toc: { prop: '--toc-w', axis: 'x', min: 140, sign: -1, el: () => $('toc'), btn: ['›', '‹'], label: '目次' },
+  memo: { prop: '--memo-w', axis: 'x', min: 180, sign: -1, el: () => $('memo'), btn: ['›', '‹'], label: 'メモ' },
   head: { prop: '--head-h', axis: 'y', min: 48, sign: 1, el: () => $('session-head'), btn: ['▴', '▾'], label: 'ヘッダー' },
 };
 
@@ -891,6 +925,11 @@ function applyLayout() {
   } catch {}
 }
 
+function togglePane(k, open = layout.collapsed[k]) {
+  layout.collapsed[k] = !open;
+  applyLayout();
+}
+
 function setupPanes() {
   for (const handle of document.querySelectorAll('.handle[data-pane]')) {
     const k = handle.dataset.pane;
@@ -920,7 +959,6 @@ function setupPanes() {
         handle.removeEventListener('pointermove', move);
         handle.classList.remove('active');
         document.body.classList.remove('resizing', p.axis);
-        updateTocActive();
       };
       handle.addEventListener('pointermove', move);
       handle.addEventListener('pointerup', up, { once: true });
@@ -934,11 +972,7 @@ function setupPanes() {
     });
   }
   for (const btn of document.querySelectorAll('[data-collapse]')) {
-    btn.addEventListener('click', () => {
-      const k = btn.dataset.collapse;
-      layout.collapsed[k] = !layout.collapsed[k];
-      applyLayout();
-    });
+    btn.addEventListener('click', () => togglePane(btn.dataset.collapse));
   }
   applyLayout();
 }
@@ -980,6 +1014,14 @@ function setupKeys() {
         if (state.view !== 'search') return false;
         closeSearchView();
       },
+      'memo.focus': () => {
+        if (!current) return false;
+        togglePane('memo', true);
+        $('memo-text').focus();
+      },
+      'pane.sidebar': () => { togglePane('sidebar'); },
+      'pane.head': () => { togglePane('head'); },
+      'pane.memo': () => { togglePane('memo'); },
       'view.toggleConversation': toggleConversation,
       'view.conversationOnly': conversationOnly,
       'view.all': showAll,
@@ -1086,10 +1128,12 @@ function bind() {
   $('find').addEventListener('input', debounce(() => runFind(true), 250));
   $('find-next').addEventListener('click', () => moveMark(1));
   $('find-prev').addEventListener('click', () => moveMark(-1));
-  $('events').addEventListener('scroll', () => requestAnimationFrame(updateTocActive), { passive: true });
   $('reload').addEventListener('click', reloadAll);
   $('reload-session').addEventListener('click', reloadAll);
   $('send').addEventListener('click', sendMessage);
+  $('memo-text').addEventListener('input', onMemoInput);
+  $('memo-to-msg').addEventListener('click', memoToComposer);
+  window.addEventListener('pagehide', () => flushMemo({ keepalive: true }));
   $('stop').addEventListener('click', stopRunner);
   setupKeys();
 

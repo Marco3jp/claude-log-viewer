@@ -91,10 +91,17 @@
       </div>
       <div class="session-body">
         <div class="events" id="events"></div>
-        <div class="handle handle-x" data-pane="toc" title="ドラッグで幅を変更・ダブルクリックで元に戻す">
-          <button class="pane-btn" data-collapse="toc"></button>
+        <div class="handle handle-x" data-pane="memo" title="ドラッグで幅を変更・ダブルクリックで元に戻す">
+          <button class="pane-btn" data-collapse="memo"></button>
         </div>
-        <nav class="toc" id="toc"></nav>
+        <aside class="memo" id="memo">
+          <div class="memo-head">
+            <h3>メモ</h3>
+            <span class="memo-status" id="memo-status"></span>
+            <button id="memo-to-msg" title="選択した部分（選択が無ければ全部）を送信の入力欄に写す">入力欄へ</button>
+          </div>
+          <textarea id="memo-text" spellcheck="false" placeholder="このセッションのメモ。作業を眺めながら、次に送るプロンプトを書いておけます。書いた内容は自動で保存します"></textarea>
+        </aside>
       </div>
       <div class="composer" id="composer">
         <div class="pending" id="pending"></div>
