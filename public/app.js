@@ -191,10 +191,92 @@ function renderCompactItem(s, terms) {
   h('div', { class: 's-line' },
     ...itemMarks(),
     s.bookmarked ? h('span', { class: 'bm-mark' }, '★') : null,
-    h('div', { class: 's-title', html: highlightHtml(sessionTitle(s), terms) })),
+    h('div', { class: 's-title', html: highlightHtml(sessionTitle(s), terms) }),
+    s.subagents ? agentsToggle(s) : null),
   s.snippet ? h('div', { class: 's-snippet', html: highlightHtml(s.snippet, terms) }) : null);
   li.dataset.id = s.id;
+  if (s.subagents && agentsOpen.has(s.id)) li.append(agentsTree(s.id));
   return li;
+}
+
+// ---------- サブエージェント ----------
+const agentsOpen = new Set();
+const agentLists = new Map();
+
+function agentsToggle(s) {
+  const open = agentsOpen.has(s.id);
+  return h('button', {
+    class: `agents-toggle${s.agentsRunning ? ' running' : ''}`,
+    title: s.agentsRunning ? `サブエージェント ${s.subagents} 件（${s.agentsRunning} 件が動いています）` : `サブエージェント ${s.subagents} 件`,
+    onclick: (e) => {
+      e.stopPropagation();
+      if (open) agentsOpen.delete(s.id);
+      else agentsOpen.add(s.id);
+      const li = e.currentTarget.closest('li');
+      li.querySelector('.agents-tree')?.remove();
+      e.currentTarget.replaceWith(agentsToggle(s));
+      if (!open) li.append(agentsTree(s.id));
+    },
+  }, `${open ? '▾' : '▸'} ${s.agentsRunning ? `${s.agentsRunning}/` : ''}${s.subagents}`);
+}
+
+function agentsTree(id) {
+  const ul = h('ul', { class: 'agents-tree', onclick: (e) => e.stopPropagation() });
+  const fill = (list) => ul.replaceChildren(...list.map((a) => h('li', {
+    class: a.running ? 'running' : 'done',
+    title: `${a.agentType ?? ''}${a.background ? '・バックグラウンド' : ''}・ツール ${a.tools}・${fmtRange(a.start, a.last)}`,
+    onclick: () => openAgent(id, a),
+  },
+  h('span', { class: 'agent-dot' }),
+  h('span', { class: 'agent-desc' }, a.description ?? a.agentId),
+  h('span', { class: 'agent-meta' }, a.running ? elapsed(a.start) : `ツール ${a.tools}`))));
+  if (agentLists.has(id)) fill(agentLists.get(id));
+  else ul.append(h('li', { class: 'done' }, '読み込み中…'));
+  loadAgents(id).then((list) => { if (list) fill(list); });
+  return ul;
+}
+
+async function loadAgents(id) {
+  try {
+    const res = await fetch(`/api/subagents?id=${encodeURIComponent(id)}`);
+    if (!res.ok) return null;
+    const list = await res.json();
+    agentLists.set(id, list);
+    if (id === state.s) renderAgentsBar();
+    return list;
+  } catch {
+    return null;
+  }
+}
+
+function elapsed(start) {
+  const s = Math.max(0, Math.floor((Date.now() - Date.parse(start)) / 1000));
+  return s >= 3600 ? `${Math.floor(s / 3600)}時間${Math.floor((s % 3600) / 60)}分` : `${Math.floor(s / 60)}分${String(s % 60).padStart(2, '0')}秒`;
+}
+
+// 入力欄の上に、動いているサブエージェントを横に並べる
+function renderAgentsBar() {
+  const bar = $('agents-bar');
+  const list = (agentLists.get(state.s) ?? []).filter((a) => a.running);
+  bar.hidden = !list.length;
+  bar.replaceChildren(...list.map((a) => h('button', { class: 'agent-chip', title: '押すと、このサブエージェントのやり取りを開きます', onclick: () => openAgent(state.s, a) },
+    h('div', { class: 'agent-chip-head' }, h('span', { class: 'agent-dot' }), h('span', { class: 'agent-desc' }, a.description ?? a.agentId)),
+    h('div', { class: 'agent-meta' }, [a.agentType, a.background ? 'バックグラウンド' : null, `ツール ${a.tools}`, elapsed(a.start)].filter(Boolean).join(' · ')),
+    a.lastTool ? h('div', { class: 'agent-last' }, `${toolLabel(a.lastTool.name)}  ${toolSummary(a.lastTool, current?.session.cwd)}`) : null)));
+}
+
+function openAgent(id, a) {
+  showView('session');
+  return openSession(id, { focusTool: a.toolUseId });
+}
+
+// Agent の呼び出しを開いて、中のやり取りまで出す
+function focusAgentTool(toolUseId) {
+  const details = [...$('events').querySelectorAll('details.tool')].find((d) => d.dataset.id === toolUseId);
+  if (!details) return null;
+  openTool(details);
+  details.querySelector('.subagent-open')?.click();
+  return details.closest('.ev');
 }
 
 function renderCard(s, terms) {
@@ -294,7 +376,7 @@ function closeSearchView() {
 }
 
 // ---------- セッション表示 ----------
-async function openSession(id, { reload = false, focusUuid = null } = {}) {
+async function openSession(id, { reload = false, focusUuid = null, focusTool = null } = {}) {
   if (!reload && state.s !== id) {
     if (state.s) drafts.set(state.s, $('msg').value);
     $('msg').value = drafts.get(id) ?? '';
@@ -315,13 +397,18 @@ async function openSession(id, { reload = false, focusUuid = null } = {}) {
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
   const prevMark = markIndex;
   const openIds = new Set([...box.querySelectorAll('details.tool[open]')].map((d) => d.dataset.id));
+  const openAgents = new Set([...box.querySelectorAll('.subagent.loaded')].map((b) => b.dataset.agentId));
   current = data;
   renderHead(data);
   renderEvents(box, data.events, data.session.cwd);
   settleOutgoing(id, data.events);
+  if (data.session.subagents) loadAgents(id);
+  else renderAgentsBar();
   if (reload) {
     // 開いていたツールの中身を先に描いておかないと、高さが変わって読んでいた位置からずれる
     for (const d of box.querySelectorAll('details.tool')) if (openIds.has(d.dataset.id)) openTool(d);
+    // 開いていたサブエージェントのやり取りも、書き足された分を含めて開き直す
+    for (const b of box.querySelectorAll('.subagent')) if (openAgents.has(b.dataset.agentId)) b.parentNode.querySelector('.subagent-open')?.click();
     runFind(false);
     if (prevMark >= 0 && marks.length) {
       markIndex = Math.min(prevMark, marks.length - 1);
@@ -336,7 +423,7 @@ async function openSession(id, { reload = false, focusUuid = null } = {}) {
   box.scrollTop = 0;
   $('find').value = state.q.replace(/(^|\s)-("[^"]+"|\S+)/g, ' ').trim();
   // 通知から開いたときはその返事、未読があれば前に読んだところの続き、検索語があれば最初の一致。それ以外は末尾で開く
-  const target = focusUuid ? eventEl(focusUuid) : isUnread(data.session) ? firstAfter(readAt(id)) : null;
+  const target = focusTool ? focusAgentTool(focusTool) : focusUuid ? eventEl(focusUuid) : isUnread(data.session) ? firstAfter(readAt(id)) : null;
   runFind(!target);
   if (target) jumpTo(target);
   else if (!marks.length) box.scrollTop = box.scrollHeight;
@@ -725,15 +812,20 @@ function toolBody(ev, cwd) {
       break;
     case 'Agent': case 'Task': {
       body.append(...section('依頼', i.prompt), ...[result()].flat());
-      if (ev.agentId && current) {
+      // 動いている途中は結果が無く agentId も無いので、サブエージェントのログの meta.json から引く
+      const agentId = ev.agentId ?? current?.agents?.find((a) => a.toolUseId === ev.id)?.agentId;
+      if (agentId && current) {
         const box = h('div', { class: 'subagent' });
+        box.dataset.agentId = agentId;
         const btn = h('button', {
+          class: 'subagent-open',
           onclick: async () => {
             btn.disabled = true;
-            const res = await fetch(`/api/agent?session=${encodeURIComponent(current.session.id)}&agent=${encodeURIComponent(ev.agentId)}`);
+            const res = await fetch(`/api/agent?session=${encodeURIComponent(current.session.id)}&agent=${encodeURIComponent(agentId)}`);
             if (!res.ok) { btn.textContent = 'ログが見つかりません'; return; }
             const d = await res.json();
             btn.remove();
+            box.classList.add('loaded');
             renderEvents(box, d.events, cwd, true);
             if (findTerms.length) highlight(box, findTerms);
           },
@@ -1505,6 +1597,8 @@ function setupKeys() {
   saveRead();
   // 残り時間などが進むので、表に出ている間はときどき出し直す
   setInterval(() => { if (state.s && !document.hidden) loadStatus(state.s); }, 30000);
+  // 経過時間を進める。書き足しが無くても、10 分たって止まったものは終わった扱いになるので取り直す
+  setInterval(() => { if (state.s && !document.hidden && !$('agents-bar').hidden) loadAgents(state.s); }, 5000);
   $('new-close').addEventListener('click', () => $('new-dialog').close());
   $('new-create').addEventListener('click', createSession);
   $('keys-save').addEventListener('click', () => {

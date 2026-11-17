@@ -2,7 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { refresh, takeChanges, search, suggestPaths, sessionDetail, agentEvents, getSession, recentCwds, PROJECTS_DIR } from './lib/index.js';
+import { refresh, takeChanges, search, suggestPaths, sessionDetail, agentEvents, subagents, getSession, recentCwds, PROJECTS_DIR } from './lib/index.js';
 import { renderStatus, clearStatusCache, claudeStatusCommand } from './lib/statusline.js';
 import { getSettings, setStatusLine } from './lib/settings.js';
 import { setBookmark } from './lib/bookmarks.js';
@@ -173,6 +173,10 @@ const server = http.createServer(async (req, res) => {
       const id = url.searchParams.get('id') ?? '';
       if (!getSession(id)) return json(res, 404, { error: 'not found' });
       return json(res, 200, { id, bookmarked: setBookmark(id, url.searchParams.get('on') === '1') });
+    }
+    if (url.pathname === '/api/subagents') {
+      const list = subagents(url.searchParams.get('id') ?? '');
+      return list ? json(res, 200, list) : json(res, 404, { error: 'not found' });
     }
     if (url.pathname === '/api/agent') {
       const d = agentEvents(url.searchParams.get('session') ?? '', url.searchParams.get('agent') ?? '');
