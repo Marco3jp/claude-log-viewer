@@ -349,6 +349,12 @@ button:disabled { opacity: .5; cursor: default; }
 .ev.flash { animation: flash 1.6s ease-out; }
 @keyframes flash { from { background: color-mix(in srgb, var(--primary) 22%, transparent); } to { background: transparent; } }
 
+/* 送信待ちの仮の吹き出し */
+.ev-outgoing .body { border-style: dashed; opacity: .75; }
+.ev-outgoing.waiting .body { opacity: .6; }
+.ev-outgoing .ev-label { align-items: center; }
+.outgoing-cancel { font-size: 11px; padding: 0 8px; }
+
 /* 新規チャット */
 .new-dialog { width: min(640px, calc(100vw - 32px)); }
 .new-form label { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; font-size: 12px; color: var(--muted); font-weight: 600; }

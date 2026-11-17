@@ -131,6 +131,7 @@
   </header>
   <nav class="settings-tabs" role="tablist">
     <button role="tab" data-tab="keys">キー操作</button>
+    <button role="tab" data-tab="send">送信</button>
     <button role="tab" data-tab="notify">通知</button>
     <button role="tab" data-tab="status">ステータスライン</button>
   </nav>
@@ -152,6 +153,12 @@
       <button id="keys-reset">既定に戻す</button>
       <button id="keys-save" class="send">保存</button>
     </div>
+  </div>
+  <div class="keys-scroll settings-panel" data-panel="send" hidden>
+    <p class="keys-help">送信してから Claude に渡すまで、ここで決めた秒数だけ待ちます。待っている間は会話の末尾に仮の吹き出しが出て、「取り消す」かキー操作（既定は <code>Esc</code>）で取り消せます。取り消した文面は入力欄に戻ります。0 にするとすぐ送ります。この設定はこのブラウザに保存します。</p>
+    <label class="settings-row">送信まで待つ秒数
+      <input id="send-delay" type="number" min="0" max="30" step="0.5" inputmode="decimal">
+    </label>
   </div>
   <div class="keys-scroll settings-panel" data-panel="notify" hidden>
     <p class="keys-help">返事を書き終えたセッションには、一覧でいつも青い点が付きます。オンにすると、表示中でないセッションに返事が来たときと、確認待ちになったときに OS にも通知します。通知を押すと、そのセッションのその返事を開きます。この設定はこのブラウザに保存します。</p>

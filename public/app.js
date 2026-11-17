@@ -318,6 +318,7 @@ async function openSession(id, { reload = false, focusUuid = null } = {}) {
   current = data;
   renderHead(data);
   renderEvents(box, data.events, data.session.cwd);
+  settleOutgoing(id, data.events);
   if (reload) {
     // 開いていたツールの中身を先に描いておかないと、高さが変わって読んでいた位置からずれる
     for (const d of box.querySelectorAll('details.tool')) if (openIds.has(d.dataset.id)) openTool(d);
@@ -870,7 +871,6 @@ function moveMark(dir) {
 
 // ---------- 続きを送る ----------
 let runner = null; // 表示中のセッションで動かしている claude の状態
-let sending = false;
 const drafts = new Map();
 
 async function postJson(url, body) {
@@ -901,7 +901,7 @@ function showRunnerError(message) {
 function renderRunner() {
   const r = runner ?? { pending: [] };
   const blocked = !!r.elsewhere && !r.alive;
-  $('send').disabled = sending || r.running || r.pending.length > 0 || blocked;
+  $('send').disabled = !!(outgoing && outgoing.phase !== 'sent') || r.running || r.pending.length > 0 || blocked;
   const working = !!(r.alive && (r.running || r.pending.length));
   $('stop').disabled = !working;
   if (!working) disarmStop();
@@ -1014,24 +1014,109 @@ function questionCard(p) {
   return card;
 }
 
-async function sendMessage() {
+// ---------- 送信を待つ ----------
+// 送ったメッセージは会話ログに書かれた時点で取り消せないので、送る前に少し待って取り消せるようにする
+const SEND_DELAY_KEY = 'send-delay';
+const SEND_DELAY_DEFAULT = 2;
+const SEND_DELAY_MAX = 30;
+// 会話ログに書かれないまま反映待ちの表示が残り続けないように、ここで諦める
+const SETTLE_GIVE_UP_MS = 60000;
+let outgoing = null; // { id, text, phase: 'waiting' | 'sending' | 'sent', until, timer, sentAt }
+let outgoingTick = null;
+
+function sendDelay() {
+  try {
+    const raw = localStorage.getItem(SEND_DELAY_KEY);
+    const v = Number(raw);
+    return raw !== null && Number.isFinite(v) ? Math.min(SEND_DELAY_MAX, Math.max(0, v)) : SEND_DELAY_DEFAULT;
+  } catch {
+    return SEND_DELAY_DEFAULT;
+  }
+}
+
+function sendMessage() {
   const text = $('msg').value.trim();
   if (!text || !state.s || $('send').disabled) return;
   const id = state.s;
-  sending = true;
+  const delay = sendDelay() * 1000;
+  $('msg').value = '';
+  drafts.delete(id);
+  outgoing = { id, text, phase: 'waiting', until: Date.now() + delay };
+  outgoing.timer = setTimeout(postOutgoing, delay);
+  renderOutgoing();
   renderRunner();
+  const box = $('events');
+  box.scrollTop = box.scrollHeight;
+}
+
+async function postOutgoing() {
+  const o = outgoing;
+  if (!o || o.phase !== 'waiting') return;
+  o.phase = 'sending';
+  renderOutgoing();
   try {
-    setRunner(await postJson('/api/runner/send', { id, text }));
-    drafts.delete(id);
-    if (state.s === id) $('msg').value = '';
-    const box = $('events');
-    box.scrollTop = box.scrollHeight;
+    const s = await postJson('/api/runner/send', { id: o.id, text: o.text });
+    o.phase = 'sent';
+    o.sentAt = Date.now();
+    setTimeout(() => { if (outgoing === o) { outgoing = null; renderOutgoing(); } }, SETTLE_GIVE_UP_MS);
+    setRunner(s);
   } catch (e) {
+    outgoing = null;
+    restoreText(o);
     showRunnerError(e.message);
-  } finally {
-    sending = false;
-    renderRunner();
   }
+  renderOutgoing();
+  renderRunner();
+}
+
+// 取り消した文面は入力欄に戻す。書きかけがあれば、その前に置く
+function restoreText(o) {
+  if (state.s === o.id) {
+    const cur = $('msg').value.trim();
+    $('msg').value = cur ? `${o.text}\n${cur}` : o.text;
+  } else {
+    drafts.set(o.id, o.text);
+  }
+}
+
+function cancelOutgoing() {
+  if (!outgoing || outgoing.phase !== 'waiting') return false;
+  clearTimeout(outgoing.timer);
+  const o = outgoing;
+  outgoing = null;
+  restoreText(o);
+  renderOutgoing();
+  renderRunner();
+  if (state.s === o.id) $('msg').focus();
+  return true;
+}
+
+// 会話ログに同じメッセージが書かれたら、仮の表示を本物に任せる
+function settleOutgoing(id, events) {
+  const o = outgoing;
+  if (o?.phase === 'sent' && o.id === id && events.some((e) => e.kind === 'user' && Date.parse(e.ts) >= o.sentAt - 5000 && (e.text ?? '').trim() === o.text)) {
+    outgoing = null;
+  }
+  renderOutgoing();
+}
+
+function renderOutgoing() {
+  $('events').querySelector('.ev-outgoing')?.remove();
+  clearInterval(outgoingTick);
+  const o = outgoing;
+  if (!o || o.id !== state.s) return;
+  const label = h('span', {});
+  const cancel = o.phase === 'waiting' ? h('button', { class: 'outgoing-cancel', onclick: cancelOutgoing }, '取り消す') : null;
+  const el = h('div', { class: `ev ev-user ev-outgoing ${o.phase}` },
+    h('div', { class: 'ev-label' }, label, cancel),
+    h('div', { class: 'body' }, o.text));
+  const tick = () => {
+    if (o.phase === 'waiting') label.textContent = `ユーザー（送信待ち・あと ${Math.max(0, (o.until - Date.now()) / 1000).toFixed(1)} 秒）`;
+    else label.textContent = o.phase === 'sending' ? 'ユーザー（送信中…）' : 'ユーザー（送信済み・反映待ち）';
+  };
+  tick();
+  if (o.phase === 'waiting') outgoingTick = setInterval(tick, 100);
+  $('events').append(el);
 }
 
 // 割り込みは作業を打ち切るので、1 回目は構えるだけにして、続けてもう 1 回押したときだけ送る
@@ -1377,6 +1462,9 @@ function setupKeys() {
         $('find').focus();
         $('find').select();
       },
+      'composer.cancelSend': () => {
+        if (!cancelOutgoing()) return false;
+      },
       'searchView.close': () => {
         if (state.view !== 'search') return false;
         closeSearchView();
@@ -1402,6 +1490,14 @@ function setupKeys() {
   $('settings-close').addEventListener('click', () => $('settings-dialog').close());
   for (const b of document.querySelectorAll('.settings-tabs [data-tab]')) b.addEventListener('click', () => showSettingsTab(b.dataset.tab));
   $('sl-save').addEventListener('click', saveStatusSettings);
+  $('send-delay').addEventListener('change', () => {
+    const v = Number($('send-delay').value);
+    if (!Number.isFinite(v)) return;
+    try {
+      localStorage.setItem(SEND_DELAY_KEY, String(Math.min(SEND_DELAY_MAX, Math.max(0, v))));
+    } catch {}
+    $('send-delay').value = sendDelay();
+  });
   $('sl-command').addEventListener('input', () => { document.querySelector('input[name="sl-mode"][value="command"]').checked = true; });
   $('open-new').addEventListener('click', openNew);
   $('notify').addEventListener('click', toggleNotify);
@@ -1479,6 +1575,7 @@ function openSettings() {
   renderKeyRows();
   renderNotifyButton();
   loadStatusSettings();
+  $('send-delay').value = sendDelay();
   let tab = 'keys';
   try {
     tab = localStorage.getItem(SETTINGS_TAB) ?? 'keys';

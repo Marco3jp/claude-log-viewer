@@ -7,6 +7,7 @@ export const ACTIONS = [
   { id: 'find.next', label: 'セッション内検索で次の一致へ', when: 'find', keys: ['Enter'] },
   { id: 'find.prev', label: 'セッション内検索で前の一致へ', when: 'find', keys: ['Shift+Enter'] },
   { id: 'find.focus', label: 'セッション内検索へ移る', when: 'any', keys: ['Mod+F'] },
+  { id: 'composer.cancelSend', label: '送信待ちのメッセージを取り消す', when: 'any', keys: ['Escape'] },
   { id: 'searchView.close', label: '詳細検索を閉じる', when: 'any', keys: ['Escape'] },
   { id: 'view.toggleConversation', label: '「会話だけ」と「全部」を切り替える', when: 'any', keys: ['Ctrl+@'] },
   { id: 'view.conversationOnly', label: '「会話だけ」にする', when: 'any', keys: [] },
