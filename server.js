@@ -2,7 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { refresh, search, suggestPaths, sessionDetail, agentEvents, getSession, recentCwds, PROJECTS_DIR } from './lib/index.js';
+import { refresh, takeChanges, search, suggestPaths, sessionDetail, agentEvents, getSession, recentCwds, PROJECTS_DIR } from './lib/index.js';
 import { renderStatus } from './lib/statusline.js';
 import { setBookmark } from './lib/bookmarks.js';
 import { getMemo, setMemo, MEMO_MAX } from './lib/memos.js';
@@ -110,9 +110,10 @@ async function handleMemo(req, res, url) {
 
 const listeners = new Set();
 setInterval(() => {
-  const ids = refresh();
+  refresh();
+  const { ids, replies } = takeChanges();
   if (!ids.length) return;
-  const msg = `data: ${JSON.stringify({ ids })}\n\n`;
+  const msg = `data: ${JSON.stringify({ ids, replies })}\n\n`;
   for (const res of listeners) res.write(msg);
 }, POLL_MS);
 onRunnerChange((state) => {
@@ -179,6 +180,7 @@ const server = http.createServer(async (req, res) => {
 
 const t = Date.now();
 refresh();
+takeChanges();
 console.log(`${PROJECTS_DIR} を読み込みました (${Date.now() - t}ms)`);
 server.listen(PORT, HOST, () => console.log(`http://${HOST}:${PORT}/`));
 for (const sig of ['SIGINT', 'SIGTERM']) {

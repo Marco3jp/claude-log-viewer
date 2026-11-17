@@ -136,6 +136,7 @@ async function loadList() {
   $('bm-only').classList.toggle('on', !!state.bm);
   $('sv-bm').checked = !!state.bm;
   const terms = parseTerms(state.q);
+  for (const s of data.sessions) titles.set(s.id, sessionTitle(s));
   $('list').replaceChildren(...data.sessions.map((s) => renderCompactItem(s, terms)));
   $('cards').replaceChildren(...data.sessions.map((s) => renderCard(s, terms)));
 }
@@ -172,13 +173,23 @@ function selectSession(id) {
   openSession(id);
 }
 
+// 印は一覧を描き直さずに付け外しできるように、クラスで出す
+function itemClass(s) {
+  return [s.id === state.s ? 'active' : '', isUnread(s) ? 'unread' : '', runnerStates.get(s.id)?.pending?.length ? 'waiting' : ''].join(' ');
+}
+
+function itemMarks() {
+  return [h('span', { class: 'unread-mark', title: '新しい返事があります' }), h('span', { class: 'waiting-mark' }, '確認待ち')];
+}
+
 function renderCompactItem(s, terms) {
   const li = h('li', {
-    class: s.id === state.s ? 'active' : '',
+    class: itemClass(s),
     title: fmtRange(s.start, s.end),
     onclick: () => selectSession(s.id),
   },
   h('div', { class: 's-line' },
+    ...itemMarks(),
     s.bookmarked ? h('span', { class: 'bm-mark' }, '★') : null,
     h('div', { class: 's-title', html: highlightHtml(sessionTitle(s), terms) })),
   s.snippet ? h('div', { class: 's-snippet', html: highlightHtml(s.snippet, terms) }) : null);
@@ -188,10 +199,10 @@ function renderCompactItem(s, terms) {
 
 function renderCard(s, terms) {
   const li = h('li', {
-    class: s.id === state.s ? 'active' : '',
+    class: itemClass(s),
     onclick: () => selectSession(s.id),
   },
-  h('div', { class: 's-line' }, bookmarkButton(s), h('div', { class: 's-title', html: highlightHtml(sessionTitle(s), terms) })),
+  h('div', { class: 's-line' }, ...itemMarks(), bookmarkButton(s), h('div', { class: 's-title', html: highlightHtml(sessionTitle(s), terms) })),
   s.title && s.firstPrompt ? h('div', { class: 's-prompt', html: highlightHtml(s.firstPrompt, terms) }) : null,
   h('div', { class: 's-meta' },
     h('span', {}, fmtRange(s.start, s.end)),
@@ -283,7 +294,7 @@ function closeSearchView() {
 }
 
 // ---------- セッション表示 ----------
-async function openSession(id, { reload = false } = {}) {
+async function openSession(id, { reload = false, focusUuid = null } = {}) {
   if (!reload && state.s !== id) {
     if (state.s) drafts.set(state.s, $('msg').value);
     $('msg').value = drafts.get(id) ?? '';
@@ -318,10 +329,39 @@ async function openSession(id, { reload = false } = {}) {
     }
     // 末尾を読んでいたら、書き込み中のセッションの続きを追えるように末尾に付いていく
     box.scrollTop = atBottom ? box.scrollHeight : scroll;
+    markSeen();
     return;
   }
   box.scrollTop = 0;
   $('find').value = state.q.replace(/(^|\s)-("[^"]+"|\S+)/g, ' ').trim();
+  // 通知から開いたときはその返事、未読があれば前に読んだところの続き、検索語があれば最初の一致。それ以外は末尾で開く
+  const target = focusUuid ? eventEl(focusUuid) : isUnread(data.session) ? firstAfter(readAt(id)) : null;
+  runFind(!target);
+  if (target) jumpTo(target);
+  else if (!marks.length) box.scrollTop = box.scrollHeight;
+  markSeen();
+}
+
+function eventEl(uuid) {
+  const els = [...$('events').querySelectorAll('.ev')].filter((el) => el.dataset.uuid === uuid);
+  return els.find((el) => el.classList.contains('ev-assistant')) ?? els[0] ?? null;
+}
+
+function firstAfter(ts) {
+  const x = ($('events')._items ?? []).find((it) => it.ev.ts > ts && !['meta', 'system'].includes(it.ev.kind) && it.el.offsetParent !== null);
+  return x?.el ?? null;
+}
+
+function jumpTo(el) {
+  el.scrollIntoView({ block: 'start' });
+  el.classList.add('flash');
+  setTimeout(() => el.classList.remove('flash'), 1600);
+}
+
+function openAt(id, uuid) {
+  showView('session');
+  return openSession(id, { focusUuid: uuid });
+}
 
 async function reloadAll() {
   const btns = document.querySelectorAll('.reload');
@@ -357,19 +397,120 @@ async function runLive() {
 function watchChanges() {
   const es = new EventSource('/api/events');
   es.addEventListener('message', (e) => {
-    const { ids } = JSON.parse(e.data);
+    const { ids, replies = [] } = JSON.parse(e.data);
     live.list = true;
     if (state.s && ids.includes(state.s)) live.session = true;
     runLive();
+    for (const r of replies) {
+      if (watching(r.id)) continue;
+      announce({ kind: '返事', title: r.title, body: r.reply.text, tag: `reply-${r.id}`, open: () => openAt(r.id, r.reply.uuid) });
+    }
   });
   es.addEventListener('runner', (e) => {
     const s = JSON.parse(e.data);
+    const before = runnerStates.get(s.id)?.pending?.length ?? 0;
+    runnerStates.set(s.id, s);
+    for (const li of document.querySelectorAll(`.session-list li[data-id="${CSS.escape(s.id)}"]`)) li.classList.toggle('waiting', s.pending.length > 0);
+    if (s.pending.length > before && !watching(s.id)) {
+      const p = s.pending[s.pending.length - 1];
+      const what = p.toolName === 'AskUserQuestion' ? 'Claude から質問が来ています' : `${toolLabel(p.toolName)} の許可を待っています`;
+      announce({ kind: '確認待ち', title: titles.get(s.id) ?? 'セッション', body: what, tag: `waiting-${s.id}`, open: () => openAt(s.id) });
+    }
     if (s.id === state.s && !s.running) loadStatus(s.id);
     setRunner(s);
   });
   // つなぎ直す間に届かなかった変化があるかもしれない
   es.addEventListener('open', () => { if (state.s) loadRunner(state.s); });
-  document.addEventListener('visibilitychange', runLive);
+  document.addEventListener('visibilitychange', () => {
+    runLive();
+    markSeen();
+  });
+}
+
+// ---------- 未読と通知 ----------
+const READ_KEY = 'read-state';
+const NOTIFY_KEY = 'notify';
+const titles = new Map();
+const runnerStates = new Map();
+
+// 初めて使ったときより前の返事は、未読にしない
+function loadRead() {
+  try {
+    const v = JSON.parse(localStorage.getItem(READ_KEY));
+    if (v?.since) return { since: v.since, at: v.at ?? {} };
+  } catch {}
+  return { since: new Date().toISOString(), at: {} };
+}
+
+const readState = loadRead();
+
+function saveRead() {
+  try {
+    localStorage.setItem(READ_KEY, JSON.stringify(readState));
+  } catch {}
+}
+
+function readAt(id) {
+  return readState.at[id] ?? readState.since;
+}
+
+function isUnread(s) {
+  return !!s.lastReply && s.lastReply.ts > readAt(s.id);
+}
+
+// 開いていて画面が表に出ているセッションは、最後の返事まで読んだことにする
+function markSeen() {
+  const s = current?.session;
+  if (!s || document.hidden || state.view === 'search' || !s.lastReply || s.lastReply.ts <= readAt(s.id)) return;
+  readState.at[s.id] = s.lastReply.ts;
+  saveRead();
+  for (const li of document.querySelectorAll(`.session-list li[data-id="${CSS.escape(s.id)}"]`)) li.classList.remove('unread');
+}
+
+function watching(id) {
+  return id === state.s && !document.hidden && state.view !== 'search';
+}
+
+function notifyOn() {
+  try {
+    return 'Notification' in window && Notification.permission === 'granted' && localStorage.getItem(NOTIFY_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function renderNotifyButton() {
+  const on = notifyOn();
+  $('notify').classList.toggle('on', on);
+  $('notify').textContent = on ? 'OS 通知 オン' : 'OS 通知 オフ';
+}
+
+async function toggleNotify() {
+  if (!('Notification' in window)) {
+    $('notify').title = 'このブラウザは通知に対応していません';
+    return;
+  }
+  try {
+    if (notifyOn()) {
+      localStorage.removeItem(NOTIFY_KEY);
+    } else if ((await Notification.requestPermission()) === 'granted') {
+      localStorage.setItem(NOTIFY_KEY, '1');
+    } else {
+      $('notify').title = 'ブラウザの設定で、このページの通知が許可されていません';
+    }
+  } catch {}
+  renderNotifyButton();
+}
+
+// 一覧の印とは別に、オンのときだけ OS に通知する。押すとそのセッションを開く
+function announce({ kind, title, body, tag, open }) {
+  if (!notifyOn()) return;
+  const n = new Notification(`${kind}: ${title}`, { body, tag });
+  n.onclick = () => {
+    window.focus();
+    n.close();
+    open();
+  };
 }
 
 // ---------- ステータスライン ----------
@@ -603,6 +744,7 @@ function openTool(details) {
 function renderEvent(ev, cwd) {
   const cat = eventCategory(ev);
   const el = h('div', { class: `ev ev-${cat}` });
+  if (ev.uuid) el.dataset.uuid = ev.uuid;
   if (ev.kind === 'tool') {
     const name = ev.category === 'mcp' ? `${ev.server} / ${ev.name.split('__').slice(2).join('__')}` : ev.name;
     const details = h('details', { class: 'tool' },
@@ -1220,6 +1362,9 @@ function setupKeys() {
   renderKeyHints();
   $('open-keys').addEventListener('click', openKeys);
   $('open-new').addEventListener('click', openNew);
+  $('notify').addEventListener('click', toggleNotify);
+  renderNotifyButton();
+  saveRead();
   // 残り時間などが進むので、表に出ている間はときどき出し直す
   setInterval(() => { if (state.s && !document.hidden) loadStatus(state.s); }, 30000);
   $('new-close').addEventListener('click', () => $('new-dialog').close());
