@@ -360,6 +360,21 @@ button:disabled { opacity: .5; cursor: default; }
 #new-text:focus, .new-form input:focus { outline: none; border-color: var(--primary); }
 .empty-note { color: var(--muted); font-size: 13px; padding: 24px 0; }
 
+/* 設定画面 */
+.settings-tabs { display: flex; gap: 2px; padding: 0 16px; border-bottom: 1px solid var(--border); }
+.settings-tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 8px 12px; color: var(--muted); }
+.settings-tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--primary); font-weight: 600; }
+.settings-row { display: flex; align-items: center; gap: 10px; }
+.settings-note { font-size: 12px; color: var(--muted); }
+.settings-choices { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.settings-choices label { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; cursor: pointer; }
+.settings-cmd { flex-basis: 100%; margin-left: 22px; font-size: 12px; color: var(--muted); background: var(--code); padding: 2px 6px; border-radius: 4px; word-break: break-all; }
+#sl-command {
+  margin-left: 22px; resize: vertical; font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; color: var(--text);
+  background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
+}
+#sl-command:focus { outline: none; border-color: var(--primary); }
+
 /* キー操作の設定 */
 .keys-dialog {
   width: min(860px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; display: none; flex-direction: column;

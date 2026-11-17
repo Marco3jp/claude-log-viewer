@@ -19,7 +19,7 @@ export const ACTIONS = [
   { id: 'search.focus', label: '検索欄へ移る', when: 'global', keys: ['/'] },
   { id: 'composer.focus', label: '送信の入力欄へ移る', when: 'global', keys: [] },
   { id: 'reload', label: '一覧と表示中のセッションを読み直す', when: 'global', keys: ['R'] },
-  { id: 'keys.open', label: 'キー操作の設定を開く', when: 'global', keys: ['?'] },
+  { id: 'keys.open', label: '設定を開く', when: 'global', keys: ['?'] },
 ];
 
 export const WHEN_LABELS = {

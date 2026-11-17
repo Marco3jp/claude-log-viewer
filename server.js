@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { refresh, takeChanges, search, suggestPaths, sessionDetail, agentEvents, getSession, recentCwds, PROJECTS_DIR } from './lib/index.js';
-import { renderStatus } from './lib/statusline.js';
+import { renderStatus, clearStatusCache, claudeStatusCommand } from './lib/statusline.js';
+import { getSettings, setStatusLine } from './lib/settings.js';
 import { setBookmark } from './lib/bookmarks.js';
 import { getMemo, setMemo, MEMO_MAX } from './lib/memos.js';
 import { send, create, answer, stop, stopAll, runnerState, runnerCwd, openElsewhere, onRunnerChange } from './lib/runner.js';
@@ -93,6 +94,18 @@ async function handleRunner(req, res, url) {
 // fs.watch は macOS のサンドボックス内で EMFILE になるなど環境によって使えないので、更新時刻を見に行く。
 // 変わっていなければ 1,000 セッションほどで十数ミリ秒
 const POLL_MS = 2000;
+// ステータスラインのコマンドはサーバーが動かすので、設定はブラウザではなくサーバー側に持つ
+async function handleSettings(req, res) {
+  if (req.method === 'GET') return json(res, 200, { ...getSettings(), claudeStatusCommand: claudeStatusCommand() });
+  if (req.method !== 'POST') return json(res, 405, { error: 'GET or POST only' });
+  if (!(req.headers['content-type'] ?? '').startsWith('application/json')) return json(res, 415, { error: 'application/json only' });
+  const body = await readJson(req);
+  const out = setStatusLine(body.statusLine ?? {});
+  if (out.error) return json(res, 400, { error: out.error });
+  clearStatusCache();
+  return json(res, 200, { ...out.settings, claudeStatusCommand: claudeStatusCommand() });
+}
+
 async function handleMemo(req, res, url) {
   if (req.method === 'GET') {
     const m = getMemo(url.searchParams.get('id') ?? '');
@@ -135,6 +148,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/runner' || url.pathname.startsWith('/api/runner/')) return await handleRunner(req, res, url);
     if (url.pathname === '/api/memo') return await handleMemo(req, res, url);
     if (url.pathname === '/api/cwds') return json(res, 200, recentCwds());
+    if (url.pathname === '/api/settings') return await handleSettings(req, res);
     if (url.pathname === '/api/statusline') {
       const s = getSession(url.searchParams.get('id') ?? '');
       return s ? json(res, 200, await renderStatus(s)) : json(res, 404, { error: 'not found' });

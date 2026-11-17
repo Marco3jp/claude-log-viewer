@@ -483,6 +483,13 @@ function renderNotifyButton() {
   const on = notifyOn();
   $('notify').classList.toggle('on', on);
   $('notify').textContent = on ? 'OS 通知 オン' : 'OS 通知 オフ';
+  const perm = 'Notification' in window ? Notification.permission : 'unsupported';
+  $('notify-state').textContent = {
+    granted: 'ブラウザの許可は出ています',
+    denied: 'ブラウザの設定で、このページの通知が許可されていません。アドレスバーのサイト設定から許可してください',
+    default: 'オンにするときに、ブラウザが通知の許可を求めます',
+    unsupported: 'このブラウザは通知に対応していません',
+  }[perm];
 }
 
 async function toggleNotify() {
@@ -595,7 +602,11 @@ async function loadStatus(id) {
     if (!res.ok || seq !== statusSeq || state.s !== id) return;
     const d = await res.json();
     const box = $('statusline');
-    box.title = d.command ? 'ステータスラインのコマンドの出力' : 'ステータスラインのコマンドが設定されていないので、ビュワーが組み立てた 1 行';
+    if (d.mode === 'off') {
+      box.replaceChildren();
+      return;
+    }
+    box.title = d.command ? 'ステータスラインのコマンドの出力' : 'ビュワーが組み立てた 1 行';
     box.replaceChildren(...(d.command ? ansiToNodes((d.text ?? '').split('\n')[0]) : [fallbackStatus(d.input)]));
   } catch {}
 }
@@ -1356,11 +1367,15 @@ function setupKeys() {
       'view.all': showAll,
       'search.focus': () => { $(state.view === 'search' ? 'sv-q' : 'q').focus(); },
       reload: () => { reloadAll(); },
-      'keys.open': () => { openKeys(); },
+      'keys.open': () => { openSettings(); },
     },
   });
   renderKeyHints();
-  $('open-keys').addEventListener('click', openKeys);
+  $('open-settings').addEventListener('click', openSettings);
+  $('settings-close').addEventListener('click', () => $('settings-dialog').close());
+  for (const b of document.querySelectorAll('.settings-tabs [data-tab]')) b.addEventListener('click', () => showSettingsTab(b.dataset.tab));
+  $('sl-save').addEventListener('click', saveStatusSettings);
+  $('sl-command').addEventListener('input', () => { document.querySelector('input[name="sl-mode"][value="command"]').checked = true; });
   $('open-new').addEventListener('click', openNew);
   $('notify').addEventListener('click', toggleNotify);
   renderNotifyButton();
@@ -1369,7 +1384,6 @@ function setupKeys() {
   setInterval(() => { if (state.s && !document.hidden) loadStatus(state.s); }, 30000);
   $('new-close').addEventListener('click', () => $('new-dialog').close());
   $('new-create').addEventListener('click', createSession);
-  $('keys-close').addEventListener('click', () => $('keys-dialog').close());
   $('keys-save').addEventListener('click', () => {
     const r = keymap.apply($('keys-text').value);
     showKeyErrors(r.errors);
@@ -1397,7 +1411,7 @@ function renderKeyHints() {
   for (const id of ['reload', 'reload-session']) $(id).title = title('一覧と表示中のセッションを読み直す', 'reload');
   $('find-prev').title = title('前へ', 'find.prev');
   $('find-next').title = title('次へ', 'find.next');
-  $('open-keys').title = title('キー操作の設定', 'keys.open');
+  $('open-settings').title = title('キー操作・通知・ステータスラインの設定', 'keys.open');
   const send = key('composer.send');
   const newline = key('composer.newline');
   const hint = [send && `${send} で送信`, newline && `${newline} で改行`].filter(Boolean).join('・');
@@ -1421,11 +1435,53 @@ function renderKeyRows() {
   }));
 }
 
-function openKeys() {
+// ---------- 設定画面 ----------
+const SETTINGS_TAB = 'settings-tab';
+
+function showSettingsTab(tab) {
+  for (const b of document.querySelectorAll('.settings-tabs [data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
+  for (const p of document.querySelectorAll('.settings-panel')) p.hidden = p.dataset.panel !== tab;
+  try {
+    localStorage.setItem(SETTINGS_TAB, tab);
+  } catch {}
+}
+
+function openSettings() {
   $('keys-text').value = loadUserText();
   showKeyErrors(keymap.get().errors);
   renderKeyRows();
-  $('keys-dialog').showModal();
+  renderNotifyButton();
+  loadStatusSettings();
+  let tab = 'keys';
+  try {
+    tab = localStorage.getItem(SETTINGS_TAB) ?? 'keys';
+  } catch {}
+  showSettingsTab(tab);
+  $('settings-dialog').showModal();
+}
+
+function renderStatusSettings(d) {
+  for (const r of document.querySelectorAll('input[name="sl-mode"]')) r.checked = r.value === d.statusLine.mode;
+  $('sl-command').value = d.statusLine.command ?? '';
+  $('sl-claude').textContent = d.claudeStatusCommand ?? '（~/.claude/settings.json に statusLine がありません）';
+}
+
+async function loadStatusSettings() {
+  try {
+    renderStatusSettings(await (await fetch('/api/settings')).json());
+  } catch {}
+}
+
+async function saveStatusSettings() {
+  const mode = document.querySelector('input[name="sl-mode"]:checked')?.value ?? 'claude';
+  $('sl-error').hidden = true;
+  try {
+    renderStatusSettings(await postJson('/api/settings', { statusLine: { mode, command: $('sl-command').value } }));
+    if (state.s) loadStatus(state.s);
+  } catch (e) {
+    $('sl-error').hidden = false;
+    $('sl-error').textContent = e.message;
+  }
 }
 
 // ---------- 起動 ----------

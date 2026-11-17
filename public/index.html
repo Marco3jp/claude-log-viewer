@@ -12,8 +12,7 @@
     <div class="search-box">
       <div class="side-top">
         <button id="open-new" class="side-btn send">新規チャット</button>
-        <button id="notify" class="side-btn" title="返事が来たときと確認待ちになったときに、OS に通知する">OS 通知</button>
-        <button id="open-keys" class="side-btn" title="キー操作の設定 (?)">キー</button>
+        <button id="open-settings" class="side-btn" title="キー操作・通知・ステータスラインの設定 (?)">設定</button>
       </div>
       <input id="q" type="search" placeholder="全文検索" autocomplete="off">
       <div class="side-actions">
@@ -125,17 +124,22 @@
     </div>
   </main>
 </div>
-<dialog class="keys-dialog" id="keys-dialog">
+<dialog class="keys-dialog" id="settings-dialog">
   <header class="keys-head">
-    <h2>キー操作</h2>
-    <button id="keys-close">閉じる</button>
+    <h2>設定</h2>
+    <button id="settings-close">閉じる</button>
   </header>
-  <div class="keys-scroll">
+  <nav class="settings-tabs" role="tablist">
+    <button role="tab" data-tab="keys">キー操作</button>
+    <button role="tab" data-tab="notify">通知</button>
+    <button role="tab" data-tab="status">ステータスライン</button>
+  </nav>
+  <div class="keys-scroll settings-panel" data-panel="keys">
     <table class="keys-table">
       <thead><tr><th>操作</th><th>使える場所</th><th>キー</th><th>操作名</th></tr></thead>
       <tbody id="keys-rows"></tbody>
     </table>
-    <h3>設定</h3>
+    <h3>割り当てを変える</h3>
     <p class="keys-help">操作名にキーの配列を書くと既定を置き換え、操作名の先頭に <code>+</code> を付けると既定に足します。空の配列 <code>[]</code> でその操作のキーを無くせます。修飾キーは <code>Ctrl</code>・<code>Alt</code>・<code>Shift</code>・<code>Cmd</code>・<code>Mod</code>（Mac では Cmd、ほかでは Ctrl）です。設定はこのブラウザに保存します。</p>
     <textarea id="keys-text" rows="7" spellcheck="false" placeholder='{
   "composer.send": ["Mod+Enter"],
@@ -147,6 +151,28 @@
     <div class="keys-actions">
       <button id="keys-reset">既定に戻す</button>
       <button id="keys-save" class="send">保存</button>
+    </div>
+  </div>
+  <div class="keys-scroll settings-panel" data-panel="notify" hidden>
+    <p class="keys-help">返事を書き終えたセッションには、一覧でいつも青い点が付きます。オンにすると、表示中でないセッションに返事が来たときと、確認待ちになったときに OS にも通知します。通知を押すと、そのセッションのその返事を開きます。この設定はこのブラウザに保存します。</p>
+    <div class="settings-row">
+      <button id="notify" class="side-btn">OS 通知</button>
+      <span class="settings-note" id="notify-state"></span>
+    </div>
+  </div>
+  <div class="keys-scroll settings-panel" data-panel="status" hidden>
+    <p class="keys-help">入力欄の上に出す 1 行の作り方を選びます。コマンドには、Claude Code がステータスラインのコマンドに渡すのと同じ形の JSON が標準入力で渡り、標準出力の 1 行目を出します。この設定はサーバーのデータ用ディレクトリに保存します。</p>
+    <div class="settings-choices">
+      <label><input type="radio" name="sl-mode" value="claude"> Claude Code の設定のコマンドを使う
+        <code class="settings-cmd" id="sl-claude"></code></label>
+      <label><input type="radio" name="sl-mode" value="command"> ビュワー専用のコマンドを使う</label>
+      <textarea id="sl-command" rows="3" spellcheck="false" placeholder="sh ~/.claude/statusline-command.sh"></textarea>
+      <label><input type="radio" name="sl-mode" value="builtin"> ビュワーの簡易表示（モデル・使用率・コンテキスト・増減した行数）</label>
+      <label><input type="radio" name="sl-mode" value="off"> 出さない</label>
+    </div>
+    <div class="keys-error" id="sl-error" hidden></div>
+    <div class="keys-actions">
+      <button id="sl-save" class="send">保存</button>
     </div>
   </div>
 </dialog>
