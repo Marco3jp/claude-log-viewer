@@ -695,12 +695,34 @@ function toolLabel(name) {
   return name.startsWith('mcp__') ? `${name.split('__')[1]} / ${name.split('__').slice(2).join('__')}` : name;
 }
 
+// 何を許可するのかが一目で分かるように、ツールごとに説明と中身を選んで出す
+function requestDetail(p) {
+  const i = p.input ?? {};
+  const file = shortPath(i.file_path ?? i.notebook_path, current?.session.cwd);
+  switch (p.toolName) {
+    case 'Bash': return { desc: i.description, blocks: [[null, i.command]] };
+    case 'Edit': return { desc: file, blocks: [['変更前', i.old_string, 'diff-old'], ['変更後', i.new_string, 'diff-new']] };
+    case 'MultiEdit':
+      return { desc: file, blocks: (i.edits ?? []).flatMap((e, n) => [[`変更前 ${n + 1}`, e.old_string, 'diff-old'], [`変更後 ${n + 1}`, e.new_string, 'diff-new']]) };
+    case 'Write': return { desc: file, blocks: [['内容', i.content, 'diff-new']] };
+    case 'NotebookEdit': return { desc: file, blocks: [['内容', i.new_source, 'diff-new']] };
+    case 'WebFetch': return { desc: i.prompt, blocks: [[null, i.url]] };
+    case 'WebSearch': return { desc: null, blocks: [[null, i.query]] };
+    default: return { desc: null, blocks: [[null, JSON.stringify(i, null, 2)]], whole: true };
+  }
+}
+
 function permissionCard(p) {
   const reason = h('input', { type: 'text', class: 'deny-reason', placeholder: '拒否の理由（Claude に伝わります・省略可）' });
+  const d = requestDetail(p);
   const card = h('div', { class: 'req-card' },
     h('div', { class: 'req-head' }, h('span', { class: 'req-kind' }, '許可の確認'), h('span', { class: 'name' }, toolLabel(p.toolName))),
-    h('div', { class: 'req-sum' }, toolSummary({ name: p.toolName, input: p.input }, current?.session.cwd)),
-    h('details', {}, h('summary', {}, '入力をすべて見る'), pre(JSON.stringify(p.input, null, 2))),
+    d.desc ? h('div', { class: 'req-desc' }, d.desc) : null,
+    d.blocks.filter(([, text]) => text != null).flatMap(([label, text, cls]) => [
+      label ? h('div', { class: 'req-label' }, label) : null,
+      h('pre', { class: `req-code ${cls ?? ''}` }, text),
+    ]),
+    d.whole ? null : h('details', {}, h('summary', {}, '入力をすべて見る'), pre(JSON.stringify(p.input, null, 2))),
     h('div', { class: 'req-actions' },
       h('button', { class: 'send', onclick: () => answerRequest(p, { behavior: 'allow' }, card) }, '許可'),
       reason,
