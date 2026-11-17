@@ -795,6 +795,78 @@ async function stopRunner() {
   }
 }
 
+// ---------- 新規チャット ----------
+const NEW_PREFS = 'new-session';
+
+function loadNewPrefs() {
+  try {
+    return JSON.parse(localStorage.getItem(NEW_PREFS)) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+async function openNew() {
+  const prefs = loadNewPrefs();
+  // 開いているセッションがあれば、その作業ディレクトリを初めから入れておく
+  $('new-cwd').value = current?.session.cwd ?? prefs.cwd ?? '';
+  $('new-mode').value = prefs.mode ?? 'default';
+  $('new-error').hidden = true;
+  $('new-create').disabled = false;
+  $('new-dialog').showModal();
+  $('new-text').focus();
+  try {
+    const cwds = await (await fetch('/api/cwds')).json();
+    $('cwd-list').replaceChildren(...cwds.map((c) => h('option', { value: c })));
+  } catch {}
+}
+
+async function createSession() {
+  const cwd = $('new-cwd').value.trim();
+  const text = $('new-text').value.trim();
+  const mode = $('new-mode').value;
+  if (!cwd || !text || $('new-create').disabled) return;
+  $('new-create').disabled = true;
+  try {
+    const s = await postJson('/api/runner/new', { cwd, text, permissionMode: mode });
+    try {
+      localStorage.setItem(NEW_PREFS, JSON.stringify({ cwd, mode }));
+    } catch {}
+    $('new-text').value = '';
+    $('new-dialog').close();
+    showNewSession(s, cwd);
+  } catch (e) {
+    $('new-error').hidden = false;
+    $('new-error').textContent = e.message;
+    $('new-create').disabled = false;
+  }
+}
+
+// 会話ログが書かれるまでは一覧に無いので、仮の表示を出して書かれるのを待つ
+async function showNewSession(s, cwd) {
+  if (state.s) drafts.set(state.s, $('msg').value);
+  $('msg').value = '';
+  current = null;
+  state.s = s.id;
+  writeHash();
+  showView('session');
+  $('session-head').replaceChildren(h('h2', {}, h('span', {}, '新しいセッション')), h('dl', { class: 'head-grid' }, h('dt', {}, '場所'), h('dd', {}, h('code', {}, cwd))));
+  $('tb-title-text').textContent = '新しいセッション';
+  $('events').replaceChildren(h('div', { class: 'empty-note' }, 'Claude が会話ログを書き始めると、ここに表示されます'));
+  runner = s;
+  renderRunner();
+  loadMemo(s.id);
+  for (let i = 0; i < 60 && state.s === s.id; i++) {
+    const res = await fetch(`/api/session?id=${encodeURIComponent(s.id)}`);
+    if (res.ok) {
+      await openSession(s.id);
+      loadList();
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
+
 // ---------- メモ ----------
 const MEMO_SAVE_MS = 800;
 const memo = { id: null, timer: null, seq: 0 };
@@ -1011,6 +1083,8 @@ function setupKeys() {
   keymap = createKeymap({
     where: () => {
       const el = document.activeElement;
+      // 新規チャットの画面では、メッセージ欄での送信と改行だけを受ける
+      if ($('new-dialog').open) return new Set(el === $('new-text') ? ['composer'] : []);
       const typing = ['INPUT', 'SELECT', 'TEXTAREA'].includes(el?.tagName);
       const places = new Set(['any']);
       if (!typing) places.add('global');
@@ -1019,8 +1093,9 @@ function setupKeys() {
       return places;
     },
     handlers: {
-      'composer.send': () => { sendMessage(); },
-      'composer.newline': () => { insertNewline($('msg')); },
+      'composer.send': () => { if ($('new-dialog').open) createSession(); else sendMessage(); },
+      'composer.newline': () => { insertNewline(document.activeElement); },
+      'session.new': () => { openNew(); },
       'composer.focus': () => {
         if (!current) return false;
         $('msg').focus();
@@ -1054,6 +1129,9 @@ function setupKeys() {
   });
   renderKeyHints();
   $('open-keys').addEventListener('click', openKeys);
+  $('open-new').addEventListener('click', openNew);
+  $('new-close').addEventListener('click', () => $('new-dialog').close());
+  $('new-create').addEventListener('click', createSession);
   $('keys-close').addEventListener('click', () => $('keys-dialog').close());
   $('keys-save').addEventListener('click', () => {
     const r = keymap.apply($('keys-text').value);

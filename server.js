@@ -2,10 +2,10 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { refresh, search, suggestPaths, sessionDetail, agentEvents, getSession, PROJECTS_DIR } from './lib/index.js';
+import { refresh, search, suggestPaths, sessionDetail, agentEvents, getSession, recentCwds, PROJECTS_DIR } from './lib/index.js';
 import { setBookmark } from './lib/bookmarks.js';
 import { getMemo, setMemo, MEMO_MAX } from './lib/memos.js';
-import { send, answer, stop, stopAll, runnerState, openElsewhere, onRunnerChange } from './lib/runner.js';
+import { send, create, answer, stop, stopAll, runnerState, runnerCwd, openElsewhere, onRunnerChange } from './lib/runner.js';
 
 const PORT = Number(process.env.PORT) || 4317;
 // 会話ログにはコードや認証まわりの出力がそのまま入っているので、ループバック以外では待ち受けない
@@ -65,14 +65,20 @@ async function handleRunner(req, res, url) {
   if (req.method !== 'POST') return json(res, 405, { error: 'POST only' });
   if (!(req.headers['content-type'] ?? '').startsWith('application/json')) return json(res, 415, { error: 'application/json only' });
   const body = await readJson(req);
+  const text = String(body.text ?? '').trim();
+  if (url.pathname === '/api/runner/new') {
+    if (!text) return json(res, 400, { error: '送る内容が空です' });
+    const out = create(String(body.cwd ?? '').trim(), text, String(body.permissionMode ?? ''));
+    return out.error ? json(res, out.code ?? 400, { error: out.error }) : json(res, 200, out.state);
+  }
   const id = String(body.id ?? '');
   const s = getSession(id);
-  if (!s) return json(res, 404, { error: 'not found' });
+  const cwd = s?.cwd ?? runnerCwd(id);
+  if (!cwd) return json(res, 404, { error: 'not found' });
   let out;
   if (url.pathname === '/api/runner/send') {
-    const text = String(body.text ?? '').trim();
     if (!text) return json(res, 400, { error: '送る内容が空です' });
-    out = send(id, s.cwd, text, s.permissionMode);
+    out = send(id, cwd, text, s?.permissionMode);
   } else if (url.pathname === '/api/runner/answer') {
     out = answer(id, String(body.requestId ?? ''), body);
   } else if (url.pathname === '/api/runner/stop') {
@@ -126,6 +132,7 @@ const server = http.createServer(async (req, res) => {
   try {
     if (url.pathname === '/api/runner' || url.pathname.startsWith('/api/runner/')) return await handleRunner(req, res, url);
     if (url.pathname === '/api/memo') return await handleMemo(req, res, url);
+    if (url.pathname === '/api/cwds') return json(res, 200, recentCwds());
     if (url.pathname === '/api/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store' });
       res.write('retry: 3000\n\n');

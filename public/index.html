@@ -10,12 +10,15 @@
 <div class="app" id="app">
   <aside class="sidebar">
     <div class="search-box">
+      <div class="side-top">
+        <button id="open-new" class="side-btn send">新規チャット</button>
+        <button id="open-keys" class="side-btn" title="キー操作の設定 (?)">キー</button>
+      </div>
       <input id="q" type="search" placeholder="全文検索" autocomplete="off">
       <div class="side-actions">
         <button id="open-search" class="side-btn">詳細検索</button>
         <button id="bm-only" class="side-btn bm-toggle" title="ブックマークしたセッションだけ">★</button>
         <span id="side-count" class="side-count"></span>
-        <button id="open-keys" class="side-btn" title="キー操作の設定 (?)">キー</button>
         <button id="reload" class="reload side-btn" title="一覧と表示中のセッションを読み直す (R)">再読み込み</button>
       </div>
     </div>
@@ -140,6 +143,33 @@
     <div class="keys-actions">
       <button id="keys-reset">既定に戻す</button>
       <button id="keys-save" class="send">保存</button>
+    </div>
+  </div>
+</dialog>
+<dialog class="keys-dialog new-dialog" id="new-dialog" data-keymap>
+  <header class="keys-head">
+    <h2>新規チャット</h2>
+    <button id="new-close">閉じる</button>
+  </header>
+  <div class="keys-scroll new-form">
+    <label>作業ディレクトリ
+      <input id="new-cwd" list="cwd-list" placeholder="/Users/you/project" autocomplete="off" spellcheck="false">
+    </label>
+    <datalist id="cwd-list"></datalist>
+    <label>権限モード
+      <select id="new-mode">
+        <option value="default">default（毎回確認する）</option>
+        <option value="acceptEdits">acceptEdits（編集は確認しない）</option>
+        <option value="auto">auto（危なそうなものだけ確認する）</option>
+        <option value="plan">plan（計画だけ立てる）</option>
+      </select>
+    </label>
+    <label>最初のメッセージ
+      <textarea id="new-text" rows="6"></textarea>
+    </label>
+    <div class="keys-error" id="new-error" hidden></div>
+    <div class="keys-actions">
+      <button id="new-create" class="send">作成して送る</button>
     </div>
   </div>
 </dialog>

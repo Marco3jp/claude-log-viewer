@@ -93,6 +93,8 @@ body.resizing.y, body.resizing.y * { cursor: row-resize !important; }
 }
 .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip button { border: 0; background: none; padding: 0 4px; line-height: 1; }
+.side-top { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.side-top .send { flex: 1; }
 .side-actions { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
 .side-btn { font-size: 12px; padding: 3px 9px; }
 .side-btn.on { background: var(--accent-soft); border-color: var(--accent); }
@@ -310,6 +312,18 @@ button:disabled { opacity: .5; cursor: default; }
 .opt { display: flex; gap: 6px; align-items: baseline; padding: 2px 0; cursor: pointer; }
 .opt .desc { color: var(--muted); font-size: 12px; margin-left: 8px; }
 .req-card .other { width: 100%; margin-top: 4px; }
+
+/* 新規チャット */
+.new-dialog { width: min(640px, calc(100vw - 32px)); }
+.new-form label { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; font-size: 12px; color: var(--muted); font-weight: 600; }
+.new-form input, .new-form select { font-weight: 400; color: var(--text); }
+.new-form input { font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; }
+#new-text {
+  resize: vertical; font: inherit; font-weight: 400; color: var(--text);
+  background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
+}
+#new-text:focus, .new-form input:focus { outline: none; border-color: var(--primary); }
+.empty-note { color: var(--muted); font-size: 13px; padding: 24px 0; }
 
 /* キー操作の設定 */
 .keys-dialog {

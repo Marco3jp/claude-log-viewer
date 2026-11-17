@@ -11,6 +11,7 @@ export const ACTIONS = [
   { id: 'view.toggleConversation', label: '「会話だけ」と「全部」を切り替える', when: 'any', keys: ['Ctrl+@'] },
   { id: 'view.conversationOnly', label: '「会話だけ」にする', when: 'any', keys: [] },
   { id: 'view.all', label: '「全部」にする', when: 'any', keys: [] },
+  { id: 'session.new', label: '新規チャットを作る', when: 'global', keys: [] },
   { id: 'memo.focus', label: 'メモ欄へ移る', when: 'any', keys: [] },
   { id: 'pane.sidebar', label: '左の一覧を開閉する', when: 'any', keys: [] },
   { id: 'pane.head', label: '上のヘッダーを開閉する', when: 'any', keys: [] },
@@ -135,7 +136,8 @@ export function createKeymap({ handlers, where }) {
   document.addEventListener('keydown', (e) => {
     // 変換を確定する Enter で操作しないように、IME の入力中は除く（Safari は isComposing が立たず keyCode 229 になる）
     if (e.isComposing || e.keyCode === 229) return;
-    if (document.querySelector('dialog[open]')) return;
+    // 開いている画面が data-keymap を持つときだけ、その画面の中でもキー操作を受ける
+    if (document.querySelector('dialog[open]:not([data-keymap])')) return;
     const places = where();
     for (const a of ACTIONS) {
       if (!places.has(a.when)) continue;
