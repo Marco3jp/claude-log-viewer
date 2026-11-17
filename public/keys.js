@@ -11,6 +11,7 @@ export const ACTIONS = [
   { id: 'view.toggleConversation', label: '「会話だけ」と「全部」を切り替える', when: 'any', keys: ['Ctrl+@'] },
   { id: 'view.conversationOnly', label: '「会話だけ」にする', when: 'any', keys: [] },
   { id: 'view.all', label: '「全部」にする', when: 'any', keys: [] },
+  { id: 'runner.interrupt', label: '作業中の Claude を止める（2 回押す）', when: 'any', keys: [] },
   { id: 'session.new', label: '新規チャットを作る', when: 'global', keys: [] },
   { id: 'memo.focus', label: 'メモ欄へ移る', when: 'any', keys: [] },
   { id: 'pane.sidebar', label: '左の一覧を開閉する', when: 'any', keys: [] },

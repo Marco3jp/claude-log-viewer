@@ -902,10 +902,14 @@ function renderRunner() {
   const r = runner ?? { pending: [] };
   const blocked = !!r.elsewhere && !r.alive;
   $('send').disabled = sending || r.running || r.pending.length > 0 || blocked;
-  $('stop').hidden = !r.alive;
-  const status = r.pending.length ? '確認待ち' : r.running ? 'Claude が作業中…' : r.alive ? '待機中' : '';
-  $('runner-state').textContent = status && r.mode ? `${status}・${r.mode}` : status;
-  $('runner-state').title = r.mode ? `権限モード: ${r.mode}` : '';
+  const working = !!(r.alive && (r.running || r.pending.length));
+  $('stop').disabled = !working;
+  if (!working) disarmStop();
+  // プロセスがまだ無いときは、次に起動するときのモード（会話ログから引き継ぐもの）を出す
+  const mode = r.mode ?? current?.session.permissionMode ?? 'default';
+  const status = r.pending.length ? '確認待ち' : r.running ? 'Claude が作業中…' : '待機中';
+  $('runner-state').textContent = `${status}・${mode}`;
+  $('runner-state').title = `権限モード: ${mode}`;
   $('runner-state').classList.toggle('busy', !!r.running);
   const error = blocked
     ? `このセッションは別のプロセス（PID ${r.elsewhere.pid}${r.elsewhere.kind ? `・${r.elsewhere.kind}` : ''}）で開かれているので、ここからは送れません。そちらを閉じると送れるようになります`
@@ -1030,9 +1034,28 @@ async function sendMessage() {
   }
 }
 
+// 割り込みは作業を打ち切るので、1 回目は構えるだけにして、続けてもう 1 回押したときだけ送る
+const STOP_ARM_MS = 3000;
+let stopArmed = null;
+
+function disarmStop() {
+  clearTimeout(stopArmed);
+  stopArmed = null;
+  $('stop').classList.remove('armed');
+  $('stop').textContent = '止める';
+}
+
 async function stopRunner() {
+  if ($('stop').disabled) return;
+  if (!stopArmed) {
+    $('stop').classList.add('armed');
+    $('stop').textContent = 'もう一度で中断';
+    stopArmed = setTimeout(disarmStop, STOP_ARM_MS);
+    return;
+  }
+  disarmStop();
   try {
-    setRunner(await postJson('/api/runner/stop', { id: state.s }));
+    setRunner(await postJson('/api/runner/interrupt', { id: state.s }));
   } catch (e) {
     showRunnerError(e.message);
   }
@@ -1339,6 +1362,10 @@ function setupKeys() {
       'composer.send': () => { if ($('new-dialog').open) createSession(); else sendMessage(); },
       'composer.newline': () => { insertNewline(document.activeElement); },
       'session.new': () => { openNew(); },
+      'runner.interrupt': () => {
+        if ($('stop').disabled) return false;
+        stopRunner();
+      },
       'composer.focus': () => {
         if (!current) return false;
         $('msg').focus();

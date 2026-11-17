@@ -7,7 +7,7 @@ import { renderStatus, clearStatusCache, claudeStatusCommand } from './lib/statu
 import { getSettings, setStatusLine } from './lib/settings.js';
 import { setBookmark } from './lib/bookmarks.js';
 import { getMemo, setMemo, MEMO_MAX } from './lib/memos.js';
-import { send, create, answer, stop, stopAll, runnerState, runnerCwd, openElsewhere, onRunnerChange } from './lib/runner.js';
+import { send, create, answer, interrupt, stopAll, runnerState, runnerCwd, openElsewhere, onRunnerChange } from './lib/runner.js';
 
 const PORT = Number(process.env.PORT) || 4317;
 // 会話ログにはコードや認証まわりの出力がそのまま入っているので、ループバック以外では待ち受けない
@@ -83,8 +83,8 @@ async function handleRunner(req, res, url) {
     out = send(id, cwd, text, s?.permissionMode);
   } else if (url.pathname === '/api/runner/answer') {
     out = answer(id, String(body.requestId ?? ''), body);
-  } else if (url.pathname === '/api/runner/stop') {
-    out = stop(id);
+  } else if (url.pathname === '/api/runner/interrupt') {
+    out = interrupt(id);
   } else {
     return json(res, 404, { error: 'not found' });
   }

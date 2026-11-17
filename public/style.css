@@ -285,11 +285,12 @@ mark.current { background: var(--mark-current); outline: 2px solid var(--mark-cu
   background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
 }
 .composer textarea:focus { outline: none; border-color: var(--primary); }
-.composer-side { display: flex; flex-direction: column; align-items: stretch; gap: 4px; min-width: 6.5em; }
+.composer-side { display: flex; flex-direction: column; align-items: stretch; gap: 4px; width: 9em; flex-shrink: 0; }
 .runner-state { font-size: 11.5px; color: var(--muted); text-align: center; min-height: 1.2em; }
 .runner-state.busy { color: var(--tool); }
 button.send { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
 button.send:hover { border-color: var(--primary); }
+#stop.armed { border-color: var(--error); color: var(--error); font-weight: 600; }
 button.send:hover { filter: brightness(1.08); }
 button:disabled { opacity: .5; cursor: default; }
 .runner-error { margin-top: 6px; color: var(--error); font-size: 12px; white-space: pre-wrap; max-height: 8em; overflow: auto; }
