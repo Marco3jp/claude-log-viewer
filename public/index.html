@@ -108,10 +108,12 @@
         </aside>
       </div>
       <div class="composer" id="composer">
-        <div class="statusline" id="statusline"></div>
         <div class="pending" id="pending"></div>
         <div class="composer-row">
-          <textarea id="msg" rows="2" placeholder="このセッションに続きを送る（Enter で送信・Shift+Enter で改行）"></textarea>
+          <div class="composer-main">
+            <div class="statusline" id="statusline"></div>
+            <textarea id="msg" rows="2" placeholder="このセッションに続きを送る（Enter で送信・Shift+Enter で改行）"></textarea>
+          </div>
           <div class="composer-side">
             <span class="runner-state" id="runner-state"></span>
             <button id="send" class="send">送信</button>
