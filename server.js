@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { refresh, search, suggestPaths, sessionDetail, agentEvents, getSession, recentCwds, PROJECTS_DIR } from './lib/index.js';
+import { renderStatus } from './lib/statusline.js';
 import { setBookmark } from './lib/bookmarks.js';
 import { getMemo, setMemo, MEMO_MAX } from './lib/memos.js';
 import { send, create, answer, stop, stopAll, runnerState, runnerCwd, openElsewhere, onRunnerChange } from './lib/runner.js';
@@ -133,6 +134,10 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/runner' || url.pathname.startsWith('/api/runner/')) return await handleRunner(req, res, url);
     if (url.pathname === '/api/memo') return await handleMemo(req, res, url);
     if (url.pathname === '/api/cwds') return json(res, 200, recentCwds());
+    if (url.pathname === '/api/statusline') {
+      const s = getSession(url.searchParams.get('id') ?? '');
+      return s ? json(res, 200, await renderStatus(s)) : json(res, 404, { error: 'not found' });
+    }
     if (url.pathname === '/api/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store' });
       res.write('retry: 3000\n\n');

@@ -313,6 +313,27 @@ button:disabled { opacity: .5; cursor: default; }
 .opt .desc { color: var(--muted); font-size: 12px; margin-left: 8px; }
 .req-card .other { width: 100%; margin-top: 4px; }
 
+/* ステータスライン */
+.statusline {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted);
+  white-space: pre; overflow: hidden; text-overflow: ellipsis; margin-bottom: 6px; min-height: 1.4em;
+}
+.statusline:empty { display: none; }
+.a-bold { font-weight: 700; }
+.a-dim { opacity: .65; }
+.a-italic { font-style: italic; }
+.a-underline { text-decoration: underline; }
+.a-fg0 { color: #3b3b3b; } .a-fg1 { color: #c4372d; } .a-fg2 { color: #2f8a3e; } .a-fg3 { color: #a8780a; }
+.a-fg4 { color: #2b5fb8; } .a-fg5 { color: #9b3fa8; } .a-fg6 { color: #1d8a99; } .a-fg7 { color: #6b6963; }
+.a-fg8 { color: #6b6963; } .a-fg9 { color: #e0473c; } .a-fg10 { color: #3aa14c; } .a-fg11 { color: #c99a10; }
+.a-fg12 { color: #3f7be0; } .a-fg13 { color: #b552c2; } .a-fg14 { color: #22a3b5; } .a-fg15 { color: #1f1e1c; }
+@media (prefers-color-scheme: dark) {
+  .a-fg0 { color: #8a8780; } .a-fg1 { color: #f07a6e; } .a-fg2 { color: #6fcf7f; } .a-fg3 { color: #e8c15a; }
+  .a-fg4 { color: #84adff; } .a-fg5 { color: #d09ae0; } .a-fg6 { color: #6fd3e0; } .a-fg7 { color: #c9c6bf; }
+  .a-fg8 { color: #8a8780; } .a-fg9 { color: #ff9a8f; } .a-fg10 { color: #8fe39d; } .a-fg11 { color: #f3d37a; }
+  .a-fg12 { color: #a8c4ff; } .a-fg13 { color: #e0b6ec; } .a-fg14 { color: #8fe3ee; } .a-fg15 { color: #ecebe7; }
+}
+
 /* 新規チャット */
 .new-dialog { width: min(640px, calc(100vw - 32px)); }
 .new-form label { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; font-size: 12px; color: var(--muted); font-weight: 600; }

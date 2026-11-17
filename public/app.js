@@ -294,6 +294,7 @@ async function openSession(id, { reload = false } = {}) {
   state.s = id;
   writeHash();
   loadRunner(id);
+  loadStatus(id);
   for (const li of document.querySelectorAll('.session-list li')) li.classList.toggle('active', li.dataset.id === id);
   const res = await fetch(`/api/session?id=${encodeURIComponent(id)}`);
   if (!res.ok) return;
@@ -321,8 +322,6 @@ async function openSession(id, { reload = false } = {}) {
   }
   box.scrollTop = 0;
   $('find').value = state.q.replace(/(^|\s)-("[^"]+"|\S+)/g, ' ').trim();
-  runFind(true);
-}
 
 async function reloadAll() {
   const btns = document.querySelectorAll('.reload');
@@ -363,10 +362,101 @@ function watchChanges() {
     if (state.s && ids.includes(state.s)) live.session = true;
     runLive();
   });
-  es.addEventListener('runner', (e) => setRunner(JSON.parse(e.data)));
+  es.addEventListener('runner', (e) => {
+    const s = JSON.parse(e.data);
+    if (s.id === state.s && !s.running) loadStatus(s.id);
+    setRunner(s);
+  });
   // つなぎ直す間に届かなかった変化があるかもしれない
   es.addEventListener('open', () => { if (state.s) loadRunner(state.s); });
   document.addEventListener('visibilitychange', runLive);
+}
+
+// ---------- ステータスライン ----------
+const ANSI_BASIC = 16;
+
+function ansi256(n) {
+  if (n < 16) return null;
+  if (n >= 232) {
+    const v = 8 + (n - 232) * 10;
+    return `rgb(${v},${v},${v})`;
+  }
+  const i = n - 16;
+  const c = (x) => (x ? 55 + x * 40 : 0);
+  return `rgb(${c(Math.floor(i / 36))},${c(Math.floor(i / 6) % 6)},${c(i % 6)})`;
+}
+
+// SGR（\x1b[...m）だけを色や太字に置き換え、ほかの制御シーケンスは捨てる
+function ansiToNodes(text) {
+  const clean = text.replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[\d;?]*[A-Za-ln-z]/g, '');
+  const out = [];
+  let st = {};
+  const push = (t) => {
+    if (!t) return;
+    const cls = [st.bold && 'a-bold', st.dim && 'a-dim', st.italic && 'a-italic', st.underline && 'a-underline',
+      typeof st.fg === 'number' && st.fg < ANSI_BASIC && `a-fg${st.fg}`, typeof st.bg === 'number' && st.bg < ANSI_BASIC && `a-bg${st.bg}`].filter(Boolean).join(' ');
+    const style = [typeof st.fg === 'string' && `color:${st.fg}`, typeof st.bg === 'string' && `background:${st.bg}`].filter(Boolean).join(';');
+    out.push(cls || style ? h('span', { class: cls || null, style: style || null }, t) : document.createTextNode(t));
+  };
+  const color = (codes, i) => {
+    if (codes[i + 1] === 5) return [codes[i + 2] < 16 ? codes[i + 2] : ansi256(codes[i + 2]), i + 2];
+    if (codes[i + 1] === 2) return [`rgb(${codes[i + 2]},${codes[i + 3]},${codes[i + 4]})`, i + 4];
+    return [undefined, i];
+  };
+  const re = /\x1b\[([\d;]*)m/g;
+  let last = 0;
+  let m;
+  while ((m = re.exec(clean))) {
+    push(clean.slice(last, m.index));
+    last = re.lastIndex;
+    const codes = (m[1] || '0').split(';').map(Number);
+    for (let i = 0; i < codes.length; i++) {
+      const c = codes[i];
+      if (c === 0) st = {};
+      else if (c === 1) st.bold = true;
+      else if (c === 2) st.dim = true;
+      else if (c === 3) st.italic = true;
+      else if (c === 4) st.underline = true;
+      else if (c === 22) { st.bold = false; st.dim = false; }
+      else if (c === 23) st.italic = false;
+      else if (c === 24) st.underline = false;
+      else if (c >= 30 && c <= 37) st.fg = c - 30;
+      else if (c >= 90 && c <= 97) st.fg = c - 90 + 8;
+      else if (c === 39) st.fg = undefined;
+      else if (c >= 40 && c <= 47) st.bg = c - 40;
+      else if (c >= 100 && c <= 107) st.bg = c - 100 + 8;
+      else if (c === 49) st.bg = undefined;
+      else if (c === 38) [st.fg, i] = color(codes, i);
+      else if (c === 48) [st.bg, i] = color(codes, i);
+    }
+  }
+  push(clean.slice(last));
+  return out;
+}
+
+// ステータスラインのコマンドが設定されていないときに出す 1 行
+function fallbackStatus(x) {
+  const parts = [];
+  if (x.model) parts.push(`${x.model.display_name}${x.effort ? `(${x.effort.level})` : ''}`);
+  const rl = x.rate_limits;
+  if (rl?.five_hour) parts.push(`5h:${Math.round(rl.five_hour.used_percentage)}%${rl.seven_day ? ` 7d:${Math.round(rl.seven_day.used_percentage)}%` : ''}`);
+  const cw = x.context_window;
+  if (cw) parts.push(`${Math.round(cw.total_input_tokens / 1000)}k/${Math.round(cw.context_window_size / 1000)}k ${Math.round(cw.used_percentage)}%`);
+  if (x.cost?.total_lines_added != null) parts.push(`+${x.cost.total_lines_added} -${x.cost.total_lines_removed ?? 0}`);
+  return parts.join(' │ ');
+}
+
+let statusSeq = 0;
+async function loadStatus(id) {
+  const seq = ++statusSeq;
+  try {
+    const res = await fetch(`/api/statusline?id=${encodeURIComponent(id)}`);
+    if (!res.ok || seq !== statusSeq || state.s !== id) return;
+    const d = await res.json();
+    const box = $('statusline');
+    box.title = d.command ? 'ステータスラインのコマンドの出力' : 'ステータスラインのコマンドが設定されていないので、ビュワーが組み立てた 1 行';
+    box.replaceChildren(...(d.command ? ansiToNodes((d.text ?? '').split('\n')[0]) : [fallbackStatus(d.input)]));
+  } catch {}
 }
 
 function renderHead(d) {
@@ -1130,6 +1220,8 @@ function setupKeys() {
   renderKeyHints();
   $('open-keys').addEventListener('click', openKeys);
   $('open-new').addEventListener('click', openNew);
+  // 残り時間などが進むので、表に出ている間はときどき出し直す
+  setInterval(() => { if (state.s && !document.hidden) loadStatus(state.s); }, 30000);
   $('new-close').addEventListener('click', () => $('new-dialog').close());
   $('new-create').addEventListener('click', createSession);
   $('keys-close').addEventListener('click', () => $('keys-dialog').close());
