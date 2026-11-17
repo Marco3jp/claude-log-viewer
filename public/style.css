@@ -307,6 +307,39 @@ button:disabled { opacity: .5; cursor: default; }
 .opt .desc { color: var(--muted); font-size: 12px; margin-left: 8px; }
 .req-card .other { width: 100%; margin-top: 4px; }
 
+/* キー操作の設定 */
+.keys-dialog {
+  width: min(860px, calc(100vw - 32px)); max-height: calc(100vh - 48px); padding: 0; display: none; flex-direction: column;
+  background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 10px;
+}
+.keys-dialog[open] { display: flex; }
+.keys-dialog::backdrop { background: rgb(0 0 0 / .35); }
+.keys-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.keys-head h2 { margin: 0; font-size: 16px; }
+.keys-scroll { overflow: auto; padding: 12px 16px 16px; }
+.keys-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.keys-table th, .keys-table td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.keys-table th { color: var(--muted); font-weight: 600; font-size: 11.5px; }
+.keys-table .when { color: var(--muted); white-space: nowrap; }
+.keys-table .none { color: var(--muted); }
+.keys-table code { font-size: 11.5px; color: var(--muted); }
+kbd {
+  display: inline-block; margin: 0 4px 2px 0; padding: 0 6px; border: 1px solid var(--border); border-bottom-width: 2px;
+  border-radius: 4px; background: var(--panel-2); font-family: ui-monospace, Menlo, monospace; font-size: 12px; white-space: nowrap;
+}
+.keys-scroll h3 { font-size: 13px; margin: 16px 0 4px; }
+.keys-help { color: var(--muted); font-size: 12px; margin: 0 0 6px; line-height: 1.6; }
+.keys-help code { background: var(--code); padding: 0 4px; border-radius: 3px; }
+#keys-text {
+  width: 100%; resize: vertical; font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; color: inherit;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
+}
+#keys-text:focus { outline: none; border-color: var(--primary); }
+.keys-probe { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.keys-probe input { flex: 1; min-width: 0; font-family: ui-monospace, Menlo, monospace; }
+.keys-error { margin-top: 8px; color: var(--error); font-size: 12px; white-space: pre-wrap; }
+.keys-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+
 .hide-thinking .ev-thinking,
 .hide-bash .ev-bash,
 .hide-tool .ev-tool,

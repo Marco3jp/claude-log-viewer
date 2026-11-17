@@ -1,4 +1,5 @@
 import { renderMarkdown } from './markdown.js';
+import { ACTIONS, WHEN_LABELS, createKeymap, comboFromEvent, loadUserText } from './keys.js';
 
 const $ = (id) => document.getElementById(id);
 const LIST_KEYS = ['project', 'repo', 'ref', 'branch', 'tool', 'mcp'];
@@ -829,12 +830,20 @@ function applyToggles() {
   if (current) runFind(false);
 }
 
+const setAllToggles = (on) => {
+  for (const [k] of TOGGLES) toggleState[k] = on;
+  applyToggles();
+};
+const conversationOnly = () => setAllToggles(false);
+const showAll = () => setAllToggles(true);
+// どれか 1 つでも出ていれば「会話だけ」に、全部隠れていれば「全部」にする
+const toggleConversation = () => (TOGGLES.some(([k]) => toggleState[k]) ? conversationOnly() : showAll());
+
 function renderToggles() {
-  const preset = (vals) => () => { Object.assign(toggleState, vals); applyToggles(); };
   $('toggles').replaceChildren(
     ...TOGGLES.map(([k, label]) => h('button', { class: 'toggle', 'data-k': k, onclick: () => { toggleState[k] = !toggleState[k]; applyToggles(); } }, label)),
-    h('button', { class: 'toggle preset', onclick: preset({ thinking: false, bash: false, tool: false, mcp: false, agent: false, system: false }) }, '会話だけ'),
-    h('button', { class: 'toggle preset', onclick: preset({ thinking: true, bash: true, tool: true, mcp: true, agent: true, system: true }) }, '全部'),
+    h('button', { class: 'toggle preset', onclick: conversationOnly }, '会話だけ'),
+    h('button', { class: 'toggle preset', onclick: showAll }, '全部'),
     h('button', {
       class: 'toggle preset',
       onclick: () => {
@@ -934,6 +943,112 @@ function setupPanes() {
   applyLayout();
 }
 
+// ---------- キー操作 ----------
+let keymap = null;
+
+function insertNewline(el) {
+  el.setRangeText('\n', el.selectionStart, el.selectionEnd, 'end');
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function setupKeys() {
+  keymap = createKeymap({
+    where: () => {
+      const el = document.activeElement;
+      const typing = ['INPUT', 'SELECT', 'TEXTAREA'].includes(el?.tagName);
+      const places = new Set(['any']);
+      if (!typing) places.add('global');
+      if (el === $('msg')) places.add('composer');
+      if (el === $('find')) places.add('find');
+      return places;
+    },
+    handlers: {
+      'composer.send': () => { sendMessage(); },
+      'composer.newline': () => { insertNewline($('msg')); },
+      'composer.focus': () => {
+        if (!current) return false;
+        $('msg').focus();
+      },
+      'find.next': () => { moveMark(1); },
+      'find.prev': () => { moveMark(-1); },
+      'find.focus': () => {
+        if (!current) return false;
+        $('find').focus();
+        $('find').select();
+      },
+      'searchView.close': () => {
+        if (state.view !== 'search') return false;
+        closeSearchView();
+      },
+      'view.toggleConversation': toggleConversation,
+      'view.conversationOnly': conversationOnly,
+      'view.all': showAll,
+      'search.focus': () => { $(state.view === 'search' ? 'sv-q' : 'q').focus(); },
+      reload: () => { reloadAll(); },
+      'keys.open': () => { openKeys(); },
+    },
+  });
+  renderKeyHints();
+  $('open-keys').addEventListener('click', openKeys);
+  $('keys-close').addEventListener('click', () => $('keys-dialog').close());
+  $('keys-save').addEventListener('click', () => {
+    const r = keymap.apply($('keys-text').value);
+    showKeyErrors(r.errors);
+    if (!r.errors.length) { renderKeyRows(); renderKeyHints(); }
+  });
+  $('keys-reset').addEventListener('click', () => {
+    $('keys-text').value = '';
+    keymap.apply('');
+    showKeyErrors([]);
+    renderKeyRows();
+    renderKeyHints();
+  });
+  $('keys-probe').addEventListener('keydown', (e) => {
+    const combo = comboFromEvent(e);
+    if (!combo || combo === 'Escape' || combo === 'Tab' || combo === 'Shift+Tab') return;
+    e.preventDefault();
+    $('keys-probe').value = JSON.stringify(combo);
+  });
+}
+
+// ボタンの説明や入力欄の案内に、今の設定のキーを出す
+function renderKeyHints() {
+  const key = (id) => keymap.get().bindings.get(id)[0];
+  const title = (base, id) => (key(id) ? `${base} (${key(id)})` : base);
+  for (const id of ['reload', 'reload-session']) $(id).title = title('一覧と表示中のセッションを読み直す', 'reload');
+  $('find-prev').title = title('前へ', 'find.prev');
+  $('find-next').title = title('次へ', 'find.next');
+  $('open-keys').title = title('キー操作の設定', 'keys.open');
+  const send = key('composer.send');
+  const newline = key('composer.newline');
+  const hint = [send && `${send} で送信`, newline && `${newline} で改行`].filter(Boolean).join('・');
+  $('msg').placeholder = `このセッションに続きを送る${hint ? `（${hint}）` : ''}`;
+}
+
+function showKeyErrors(errors) {
+  $('keys-error').hidden = !errors.length;
+  $('keys-error').textContent = errors.join('\n');
+}
+
+function renderKeyRows() {
+  const { bindings } = keymap.get();
+  $('keys-rows').replaceChildren(...ACTIONS.map((a) => {
+    const keys = bindings.get(a.id);
+    return h('tr', {},
+      h('td', {}, a.label),
+      h('td', { class: 'when' }, WHEN_LABELS[a.when]),
+      h('td', {}, keys.length ? keys.map((k) => h('kbd', {}, k)) : h('span', { class: 'none' }, 'なし')),
+      h('td', {}, h('code', {}, a.id)));
+  }));
+}
+
+function openKeys() {
+  $('keys-text').value = loadUserText();
+  showKeyErrors(keymap.get().errors);
+  renderKeyRows();
+  $('keys-dialog').showModal();
+}
+
 // ---------- 起動 ----------
 function bind() {
   readHash();
@@ -969,9 +1084,6 @@ function bind() {
   const applyPath = debounce(() => { state.path = $('path').value.trim(); loadList(); }, 400);
 
   $('find').addEventListener('input', debounce(() => runFind(true), 250));
-  $('find').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); moveMark(e.shiftKey ? -1 : 1); }
-  });
   $('find-next').addEventListener('click', () => moveMark(1));
   $('find-prev').addEventListener('click', () => moveMark(-1));
   $('events').addEventListener('scroll', () => requestAnimationFrame(updateTocActive), { passive: true });
@@ -979,29 +1091,7 @@ function bind() {
   $('reload-session').addEventListener('click', reloadAll);
   $('send').addEventListener('click', sendMessage);
   $('stop').addEventListener('click', stopRunner);
-  $('msg').addEventListener('keydown', (e) => {
-    // 変換を確定する Enter で送らないように、IME の入力中は除く（Safari は isComposing が立たず keyCode 229 になる）
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
-      e.preventDefault();
-      sendMessage();
-    }
-  });
-  document.addEventListener('keydown', (e) => {
-    const typing = ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName);
-    if (e.key === 'r' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
-      e.preventDefault();
-      reloadAll();
-    } else if ((e.metaKey || e.ctrlKey) && e.key === 'f' && current) {
-      e.preventDefault();
-      $('find').focus();
-      $('find').select();
-    } else if (e.key === '/' && !typing) {
-      e.preventDefault();
-      $(state.view === 'search' ? 'sv-q' : 'q').focus();
-    } else if (e.key === 'Escape' && state.view === 'search') {
-      closeSearchView();
-    }
-  });
+  setupKeys();
 
   setupPanes();
   renderToggles();

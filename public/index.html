@@ -15,6 +15,7 @@
         <button id="open-search" class="side-btn">詳細検索</button>
         <button id="bm-only" class="side-btn bm-toggle" title="ブックマークしたセッションだけ">★</button>
         <span id="side-count" class="side-count"></span>
+        <button id="open-keys" class="side-btn" title="キー操作の設定 (?)">キー</button>
         <button id="reload" class="reload side-btn" title="一覧と表示中のセッションを読み直す (R)">再読み込み</button>
       </div>
     </div>
@@ -110,6 +111,31 @@
     </div>
   </main>
 </div>
+<dialog class="keys-dialog" id="keys-dialog">
+  <header class="keys-head">
+    <h2>キー操作</h2>
+    <button id="keys-close">閉じる</button>
+  </header>
+  <div class="keys-scroll">
+    <table class="keys-table">
+      <thead><tr><th>操作</th><th>使える場所</th><th>キー</th><th>操作名</th></tr></thead>
+      <tbody id="keys-rows"></tbody>
+    </table>
+    <h3>設定</h3>
+    <p class="keys-help">操作名にキーの配列を書くと既定を置き換え、操作名の先頭に <code>+</code> を付けると既定に足します。空の配列 <code>[]</code> でその操作のキーを無くせます。修飾キーは <code>Ctrl</code>・<code>Alt</code>・<code>Shift</code>・<code>Cmd</code>・<code>Mod</code>（Mac では Cmd、ほかでは Ctrl）です。設定はこのブラウザに保存します。</p>
+    <textarea id="keys-text" rows="7" spellcheck="false" placeholder='{
+  "composer.send": ["Mod+Enter"],
+  "composer.newline": ["Enter", "Shift+Enter"],
+  "+view.toggleConversation": ["Alt+C"]
+}'></textarea>
+    <label class="keys-probe">キーを押して表記を調べる <input id="keys-probe" readonly placeholder="ここを選んでキーを押す"></label>
+    <div class="keys-error" id="keys-error" hidden></div>
+    <div class="keys-actions">
+      <button id="keys-reset">既定に戻す</button>
+      <button id="keys-save" class="send">保存</button>
+    </div>
+  </div>
+</dialog>
 <script src="app.js" type="module"></script>
 </body>
 </html>
