@@ -7,7 +7,7 @@ import { renderStatus, clearStatusCache, claudeStatusCommand } from './lib/statu
 import { getSettings, setStatusLine } from './lib/settings.js';
 import { setBookmark } from './lib/bookmarks.js';
 import { getMemo, setMemo, MEMO_MAX } from './lib/memos.js';
-import { send, create, answer, interrupt, stopAll, runnerState, runnerCwd, openElsewhere, onRunnerChange } from './lib/runner.js';
+import { send, create, answer, interrupt, stopAll, beginClosing, busyIds, runnerState, runnerCwd, openElsewhere, onRunnerChange } from './lib/runner.js';
 
 const PORT = Number(process.env.PORT) || 4317;
 // 会話ログにはコードや認証まわりの出力がそのまま入っているので、ループバック以外では待ち受けない
@@ -201,9 +201,30 @@ refresh();
 takeChanges();
 console.log(`${PROJECTS_DIR} を読み込みました (${Date.now() - t}ms)`);
 server.listen(PORT, HOST, () => console.log(`http://${HOST}:${PORT}/`));
+// 1 回目は作業中・確認待ちのセッションが終わるのを待って止め、2 回目は待たずに止める
+let closing = false;
+
+function closeWhenIdle() {
+  if (busyIds().length) return;
+  stopAll();
+  process.exit(0);
+}
+
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
-    stopAll();
-    process.exit(0);
+    if (closing) {
+      console.log('\n待たずに止めます');
+      stopAll();
+      process.exit(0);
+    }
+    closing = true;
+    beginClosing();
+    const ids = busyIds();
+    if (!ids.length) closeWhenIdle();
+    console.log(`\n作業中・確認待ちのセッションが ${ids.length} 件あります。終わったら止めます。すぐ止めるには、もう一度 Ctrl+C を押してください`);
+    for (const id of ids) console.log(`  - ${getSession(id)?.title || getSession(id)?.firstPrompt?.slice(0, 60) || id}`);
+    onRunnerChange(closeWhenIdle);
   });
 }
+// 別のプロセスグループで起動した claude が、サーバーだけ落ちたときに取り残されないようにする
+process.on('exit', stopAll);
