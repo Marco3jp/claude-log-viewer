@@ -968,7 +968,11 @@ const drafts = new Map();
 async function postJson(url, body) {
   const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(data.error ?? `HTTP ${res.status}`);
+    err.data = data;
+    throw err;
+  }
   return data;
 }
 
@@ -990,16 +994,27 @@ function showRunnerError(message) {
   renderRunner();
 }
 
+function viaTmuxFor(r) {
+  return !!(r?.elsewhere?.tmux && !r.alive);
+}
+
 function renderRunner() {
   const r = runner ?? { pending: [] };
-  const blocked = !!r.elsewhere && !r.alive;
+  // ターミナルの tmux の中で開いているセッションには、tmux のキー入力として送れる（試験中）
+  const viaTmux = viaTmuxFor(r);
+  const blocked = !!r.elsewhere && !r.alive && !viaTmux;
+  $('composer').classList.toggle('via-tmux', viaTmux);
+  $('runner-note').hidden = !viaTmux;
+  $('runner-note').textContent = viaTmux
+    ? 'ターミナルの tmux で開いているセッションです（試験中）。送った文はターミナルの入力欄に貼り付けて送ります。確認や質問にはターミナルで答えてください。止めるも使えません'
+    : '';
   $('send').disabled = !!(outgoing && outgoing.phase !== 'sent') || r.running || r.pending.length > 0 || blocked;
   const working = !!(r.alive && (r.running || r.pending.length));
   $('stop').disabled = !working;
   if (!working) disarmStop();
   // プロセスがまだ無いときは、次に起動するときのモード（会話ログから引き継ぐもの）を出す
   const mode = r.mode ?? current?.session.permissionMode ?? 'default';
-  const status = r.pending.length ? '確認待ち' : r.running ? 'Claude が作業中…' : '待機中';
+  const status = viaTmux ? 'ターミナル（tmux）' : r.pending.length ? '確認待ち' : r.running ? 'Claude が作業中…' : '待機中';
   $('runner-state').textContent = `${status}・${mode}`;
   $('runner-state').title = `権限モード: ${mode}`;
   $('runner-state').classList.toggle('busy', !!r.running);
@@ -1147,7 +1162,8 @@ async function postOutgoing() {
   o.phase = 'sending';
   renderOutgoing();
   try {
-    const s = await postJson('/api/runner/send', { id: o.id, text: o.text });
+    const viaTmux = o.id === state.s && viaTmuxFor(runner);
+    const s = await postJson(viaTmux ? '/api/runner/send-tmux' : '/api/runner/send', { id: o.id, text: o.text });
     o.phase = 'sent';
     o.sentAt = Date.now();
     setTimeout(() => { if (outgoing === o) { outgoing = null; renderOutgoing(); } }, SETTLE_GIVE_UP_MS);
@@ -1155,7 +1171,7 @@ async function postOutgoing() {
   } catch (e) {
     outgoing = null;
     restoreText(o);
-    showRunnerError(e.message);
+    showRunnerError(e.data?.screen ? `${e.message}\n\nターミナルの画面:\n${e.data.screen}` : e.message);
   }
   renderOutgoing();
   renderRunner();

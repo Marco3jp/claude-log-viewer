@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { refresh, takeChanges, search, suggestPaths, sessionDetail, agentEvents, subagents, getSession, recentCwds, PROJECTS_DIR } from './lib/index.js';
 import { renderStatus, clearStatusCache, claudeStatusCommand } from './lib/statusline.js';
 import { getSettings, setStatusLine } from './lib/settings.js';
+import { sendViaTmux } from './lib/tmux.js';
 import { setBookmark } from './lib/bookmarks.js';
 import { getMemo, setMemo, MEMO_MAX } from './lib/memos.js';
 import { send, create, answer, interrupt, stopAll, beginClosing, busyIds, runnerState, runnerCwd, openElsewhere, onRunnerChange } from './lib/runner.js';
@@ -77,6 +78,15 @@ async function handleRunner(req, res, url) {
   const s = getSession(id);
   const cwd = s?.cwd ?? runnerCwd(id);
   if (!cwd) return json(res, 404, { error: 'not found' });
+  // ターミナルの tmux の中で開いているセッションには、tmux のキー入力として送る（試験中）
+  if (url.pathname === '/api/runner/send-tmux') {
+    if (!text) return json(res, 400, { error: '送る内容が空です' });
+    const other = openElsewhere(id);
+    if (!other) return json(res, 409, { error: 'このセッションはもうターミナルで開かれていません。ページを読み直してください' });
+    const out = await sendViaTmux(other, text);
+    if (out.error) return json(res, out.code ?? 400, { error: out.error, screen: out.screen ?? null });
+    return json(res, 200, { ...runnerState(id), elsewhere: other });
+  }
   let out;
   if (url.pathname === '/api/runner/send') {
     if (!text) return json(res, 400, { error: '送る内容が空です' });
