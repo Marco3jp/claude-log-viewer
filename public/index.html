@@ -10,6 +10,10 @@
 <div class="app" id="app">
   <aside class="sidebar">
     <div class="search-box">
+      <div class="side-top">
+        <button id="open-new" class="side-btn send">新規チャット</button>
+        <button id="open-settings" class="side-btn" title="キー操作・通知・ステータスラインの設定 (?)">設定</button>
+      </div>
       <input id="q" type="search" placeholder="全文検索" autocomplete="off">
       <div class="side-actions">
         <button id="open-search" class="side-btn">詳細検索</button>
@@ -90,14 +94,124 @@
       </div>
       <div class="session-body">
         <div class="events" id="events"></div>
-        <div class="handle handle-x" data-pane="toc" title="ドラッグで幅を変更・ダブルクリックで元に戻す">
-          <button class="pane-btn" data-collapse="toc"></button>
+        <div class="handle handle-x" data-pane="memo" title="ドラッグで幅を変更・ダブルクリックで元に戻す">
+          <button class="pane-btn" data-collapse="memo"></button>
         </div>
-        <nav class="toc" id="toc"></nav>
+        <aside class="memo" id="memo">
+          <div class="memo-head">
+            <h3>メモ</h3>
+            <span class="memo-status" id="memo-status"></span>
+            <button id="memo-to-msg" title="選択した部分（選択が無ければ全部）を送信の入力欄に写す">入力欄へ</button>
+          </div>
+          <textarea id="memo-text" spellcheck="false" placeholder="このセッションのメモ。作業を眺めながら、次に送るプロンプトを書いておけます。書いた内容は自動で保存します"></textarea>
+        </aside>
+      </div>
+      <div class="agents-bar" id="agents-bar" hidden></div>
+      <div class="composer" id="composer">
+        <div class="pending" id="pending"></div>
+        <div class="composer-row">
+          <div class="composer-main">
+            <div class="statusline" id="statusline"></div>
+            <textarea id="msg" rows="2" placeholder="このセッションに続きを送る（Enter で送信・Shift+Enter で改行）"></textarea>
+          </div>
+          <div class="composer-side">
+            <span class="runner-state" id="runner-state"></span>
+            <button id="send" class="send">送信</button>
+            <button id="stop" disabled>止める</button>
+          </div>
+        </div>
+        <div class="runner-note" id="runner-note" hidden></div>
+        <div class="runner-error" id="runner-error" hidden></div>
       </div>
     </div>
   </main>
 </div>
+<dialog class="keys-dialog" id="settings-dialog">
+  <header class="keys-head">
+    <h2>設定</h2>
+    <button id="settings-close">閉じる</button>
+  </header>
+  <nav class="settings-tabs" role="tablist">
+    <button role="tab" data-tab="keys">キー操作</button>
+    <button role="tab" data-tab="send">送信</button>
+    <button role="tab" data-tab="notify">通知</button>
+    <button role="tab" data-tab="status">ステータスライン</button>
+  </nav>
+  <div class="keys-scroll settings-panel" data-panel="keys">
+    <table class="keys-table">
+      <thead><tr><th>操作</th><th>使える場所</th><th>キー</th><th>操作名</th></tr></thead>
+      <tbody id="keys-rows"></tbody>
+    </table>
+    <h3>割り当てを変える</h3>
+    <p class="keys-help">操作名にキーの配列を書くと既定を置き換え、操作名の先頭に <code>+</code> を付けると既定に足します。空の配列 <code>[]</code> でその操作のキーを無くせます。修飾キーは <code>Ctrl</code>・<code>Alt</code>・<code>Shift</code>・<code>Cmd</code>・<code>Mod</code>（Mac では Cmd、ほかでは Ctrl）です。設定はこのブラウザに保存します。</p>
+    <textarea id="keys-text" rows="7" spellcheck="false" placeholder='{
+  "composer.send": ["Mod+Enter"],
+  "composer.newline": ["Enter", "Shift+Enter"],
+  "+view.toggleConversation": ["Alt+C"]
+}'></textarea>
+    <label class="keys-probe">キーを押して表記を調べる <input id="keys-probe" readonly placeholder="ここを選んでキーを押す"></label>
+    <div class="keys-error" id="keys-error" hidden></div>
+    <div class="keys-actions">
+      <button id="keys-reset">既定に戻す</button>
+      <button id="keys-save" class="send">保存</button>
+    </div>
+  </div>
+  <div class="keys-scroll settings-panel" data-panel="send" hidden>
+    <p class="keys-help">送信してから Claude に渡すまで、ここで決めた秒数だけ待ちます。待っている間は会話の末尾に仮の吹き出しが出て、「取り消す」かキー操作（既定は <code>Esc</code>）で取り消せます。取り消した文面は入力欄に戻ります。0 にするとすぐ送ります。この設定はこのブラウザに保存します。</p>
+    <label class="settings-row">送信まで待つ秒数
+      <input id="send-delay" type="number" min="0" max="30" step="0.5" inputmode="decimal">
+    </label>
+  </div>
+  <div class="keys-scroll settings-panel" data-panel="notify" hidden>
+    <p class="keys-help">返事を書き終えたセッションには、一覧でいつも青い点が付きます。オンにすると、表示中でないセッションに返事が来たときと、確認待ちになったときに OS にも通知します。通知を押すと、そのセッションのその返事を開きます。この設定はこのブラウザに保存します。</p>
+    <div class="settings-row">
+      <button id="notify" class="side-btn">OS 通知</button>
+      <span class="settings-note" id="notify-state"></span>
+    </div>
+  </div>
+  <div class="keys-scroll settings-panel" data-panel="status" hidden>
+    <p class="keys-help">入力欄の上に出す 1 行の作り方を選びます。コマンドには、Claude Code がステータスラインのコマンドに渡すのと同じ形の JSON が標準入力で渡り、標準出力の 1 行目を出します。この設定はサーバーのデータ用ディレクトリに保存します。</p>
+    <div class="settings-choices">
+      <label><input type="radio" name="sl-mode" value="claude"> Claude Code の設定のコマンドを使う
+        <code class="settings-cmd" id="sl-claude"></code></label>
+      <label><input type="radio" name="sl-mode" value="command"> ビュワー専用のコマンドを使う</label>
+      <textarea id="sl-command" rows="3" spellcheck="false" placeholder="sh ~/.claude/statusline-command.sh"></textarea>
+      <label><input type="radio" name="sl-mode" value="builtin"> ビュワーの簡易表示（モデル・使用率・コンテキスト・増減した行数）</label>
+      <label><input type="radio" name="sl-mode" value="off"> 出さない</label>
+    </div>
+    <div class="keys-error" id="sl-error" hidden></div>
+    <div class="keys-actions">
+      <button id="sl-save" class="send">保存</button>
+    </div>
+  </div>
+</dialog>
+<dialog class="keys-dialog new-dialog" id="new-dialog" data-keymap>
+  <header class="keys-head">
+    <h2>新規チャット</h2>
+    <button id="new-close">閉じる</button>
+  </header>
+  <div class="keys-scroll new-form">
+    <label>作業ディレクトリ
+      <input id="new-cwd" list="cwd-list" placeholder="/Users/you/project" autocomplete="off" spellcheck="false">
+    </label>
+    <datalist id="cwd-list"></datalist>
+    <label>権限モード
+      <select id="new-mode">
+        <option value="default">default（毎回確認する）</option>
+        <option value="acceptEdits">acceptEdits（編集は確認しない）</option>
+        <option value="auto">auto（危なそうなものだけ確認する）</option>
+        <option value="plan">plan（計画だけ立てる）</option>
+      </select>
+    </label>
+    <label>最初のメッセージ
+      <textarea id="new-text" rows="6"></textarea>
+    </label>
+    <div class="keys-error" id="new-error" hidden></div>
+    <div class="keys-actions">
+      <button id="new-create" class="send">作成して送る</button>
+    </div>
+  </div>
+</dialog>
 <script src="app.js" type="module"></script>
 </body>
 </html>
