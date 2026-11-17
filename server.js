@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { refresh, search, suggestPaths, sessionDetail, agentEvents, getSession, PROJECTS_DIR } from './lib/index.js';
 import { setBookmark } from './lib/bookmarks.js';
+import { send, answer, stop, stopAll, runnerState, openElsewhere, onRunnerChange } from './lib/runner.js';
 
 const PORT = Number(process.env.PORT) || 4317;
 // 会話ログにはコードや認証まわりの出力がそのまま入っているので、ループバック以外では待ち受けない
@@ -27,6 +28,59 @@ function filters(params) {
 
 // DNS リバインディングで外部のページから API を読まれないように、Host がループバックのときだけ応える
 const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
+// ほかのサイトを開いたブラウザからも POST は届くので、このビュワーのページから来たものだけ受ける
+const ALLOWED_ORIGINS = new Set([...ALLOWED_HOSTS].map((h) => `http://${h}`));
+const BODY_MAX = 1024 * 1024;
+
+function readJson(req) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > BODY_MAX) {
+        reject(new Error('本文が大きすぎます'));
+        req.destroy();
+      } else {
+        chunks.push(c);
+      }
+    });
+    req.on('end', () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'));
+      } catch {
+        reject(new Error('JSON として読めません'));
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+async function handleRunner(req, res, url) {
+  if (url.pathname === '/api/runner') {
+    const id = url.searchParams.get('id') ?? '';
+    return json(res, 200, { ...runnerState(id), elsewhere: openElsewhere(id) });
+  }
+  if (req.method !== 'POST') return json(res, 405, { error: 'POST only' });
+  if (!(req.headers['content-type'] ?? '').startsWith('application/json')) return json(res, 415, { error: 'application/json only' });
+  const body = await readJson(req);
+  const id = String(body.id ?? '');
+  const s = getSession(id);
+  if (!s) return json(res, 404, { error: 'not found' });
+  let out;
+  if (url.pathname === '/api/runner/send') {
+    const text = String(body.text ?? '').trim();
+    if (!text) return json(res, 400, { error: '送る内容が空です' });
+    out = send(id, s.cwd, text, s.permissionMode);
+  } else if (url.pathname === '/api/runner/answer') {
+    out = answer(id, String(body.requestId ?? ''), body);
+  } else if (url.pathname === '/api/runner/stop') {
+    out = stop(id);
+  } else {
+    return json(res, 404, { error: 'not found' });
+  }
+  return out.error ? json(res, out.code ?? 400, { error: out.error }) : json(res, 200, out.state);
+}
 
 // fs.watch は macOS のサンドボックス内で EMFILE になるなど環境によって使えないので、更新時刻を見に行く。
 // 変わっていなければ 1,000 セッションほどで十数ミリ秒
@@ -38,14 +92,23 @@ setInterval(() => {
   const msg = `data: ${JSON.stringify({ ids })}\n\n`;
   for (const res of listeners) res.write(msg);
 }, POLL_MS);
+onRunnerChange((state) => {
+  const msg = `event: runner\ndata: ${JSON.stringify(state)}\n\n`;
+  for (const res of listeners) res.write(msg);
+});
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   if (!ALLOWED_HOSTS.has(req.headers.host ?? '')) {
+    res.writeHead(403);
+    return res.end('forbidden');
+  }
+  if (req.method !== 'GET' && req.method !== 'HEAD' && !ALLOWED_ORIGINS.has(req.headers.origin ?? '')) {
     res.writeHead(403);
     return res.end('forbidden');
   }
   const url = new URL(req.url, `http://${req.headers.host}`);
   try {
+    if (url.pathname === '/api/runner' || url.pathname.startsWith('/api/runner/')) return await handleRunner(req, res, url);
     if (url.pathname === '/api/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store' });
       res.write('retry: 3000\n\n');
@@ -89,3 +152,9 @@ const t = Date.now();
 refresh();
 console.log(`${PROJECTS_DIR} を読み込みました (${Date.now() - t}ms)`);
 server.listen(PORT, HOST, () => console.log(`http://${HOST}:${PORT}/`));
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => {
+    stopAll();
+    process.exit(0);
+  });
+}

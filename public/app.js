@@ -283,8 +283,15 @@ function closeSearchView() {
 
 // ---------- セッション表示 ----------
 async function openSession(id, { reload = false } = {}) {
+  if (!reload && state.s !== id) {
+    if (state.s) drafts.set(state.s, $('msg').value);
+    $('msg').value = drafts.get(id) ?? '';
+    runner = null;
+    renderRunner();
+  }
   state.s = id;
   writeHash();
+  loadRunner(id);
   for (const li of document.querySelectorAll('.session-list li')) li.classList.toggle('active', li.dataset.id === id);
   const res = await fetch(`/api/session?id=${encodeURIComponent(id)}`);
   if (!res.ok) return;
@@ -356,6 +363,9 @@ function watchChanges() {
     if (state.s && ids.includes(state.s)) live.session = true;
     runLive();
   });
+  es.addEventListener('runner', (e) => setRunner(JSON.parse(e.data)));
+  // つなぎ直す間に届かなかった変化があるかもしれない
+  es.addEventListener('open', () => { if (state.s) loadRunner(state.s); });
   document.addEventListener('visibilitychange', runLive);
 }
 
@@ -650,6 +660,154 @@ function moveMark(dir) {
   $('find-count').textContent = `${markIndex + 1} / ${marks.length}${hiddenNote}`;
 }
 
+// ---------- 続きを送る ----------
+let runner = null; // 表示中のセッションで動かしている claude の状態
+let sending = false;
+const drafts = new Map();
+
+async function postJson(url, body) {
+  const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+  return data;
+}
+
+async function loadRunner(id) {
+  const res = await fetch(`/api/runner?id=${encodeURIComponent(id)}`);
+  if (!res.ok || state.s !== id) return;
+  runner = await res.json();
+  renderRunner();
+}
+
+function setRunner(s) {
+  if (s.id !== state.s) return;
+  runner = { ...runner, ...s };
+  renderRunner();
+}
+
+function showRunnerError(message) {
+  runner = { pending: [], ...runner, error: message };
+  renderRunner();
+}
+
+function renderRunner() {
+  const r = runner ?? { pending: [] };
+  const blocked = !!r.elsewhere && !r.alive;
+  $('send').disabled = sending || r.running || r.pending.length > 0 || blocked;
+  $('stop').hidden = !r.alive;
+  const status = r.pending.length ? '確認待ち' : r.running ? 'Claude が作業中…' : r.alive ? '待機中' : '';
+  $('runner-state').textContent = status && r.mode ? `${status}・${r.mode}` : status;
+  $('runner-state').title = r.mode ? `権限モード: ${r.mode}` : '';
+  $('runner-state').classList.toggle('busy', !!r.running);
+  const error = blocked
+    ? `このセッションは別のプロセス（PID ${r.elsewhere.pid}${r.elsewhere.kind ? `・${r.elsewhere.kind}` : ''}）で開かれているので、ここからは送れません。そちらを閉じると送れるようになります`
+    : r.error;
+  $('runner-error').hidden = !error;
+  $('runner-error').textContent = error ?? '';
+  renderPending(r.pending);
+}
+
+function renderPending(list) {
+  const box = $('pending');
+  // 答えを入力している途中のカードを作り直さないように、確認の組み合わせが変わったときだけ描き直す
+  const key = list.map((p) => p.requestId).join(',');
+  if (box.dataset.key === key) return;
+  box.dataset.key = key;
+  box.replaceChildren(...list.map((p) => (p.toolName === 'AskUserQuestion' ? questionCard(p) : permissionCard(p))));
+}
+
+async function answerRequest(p, body, card) {
+  for (const b of card.querySelectorAll('button')) b.disabled = true;
+  try {
+    setRunner(await postJson('/api/runner/answer', { id: state.s, requestId: p.requestId, ...body }));
+  } catch (e) {
+    for (const b of card.querySelectorAll('button')) b.disabled = false;
+    showRunnerError(e.message);
+  }
+}
+
+function toolLabel(name) {
+  return name.startsWith('mcp__') ? `${name.split('__')[1]} / ${name.split('__').slice(2).join('__')}` : name;
+}
+
+function permissionCard(p) {
+  const reason = h('input', { type: 'text', class: 'deny-reason', placeholder: '拒否の理由（Claude に伝わります・省略可）' });
+  const card = h('div', { class: 'req-card' },
+    h('div', { class: 'req-head' }, h('span', { class: 'req-kind' }, '許可の確認'), h('span', { class: 'name' }, toolLabel(p.toolName))),
+    h('div', { class: 'req-sum' }, toolSummary({ name: p.toolName, input: p.input }, current?.session.cwd)),
+    h('details', {}, h('summary', {}, '入力をすべて見る'), pre(JSON.stringify(p.input, null, 2))),
+    h('div', { class: 'req-actions' },
+      h('button', { class: 'send', onclick: () => answerRequest(p, { behavior: 'allow' }, card) }, '許可'),
+      reason,
+      h('button', { onclick: () => answerRequest(p, { behavior: 'deny', message: reason.value.trim() }, card) }, '拒否')));
+  return card;
+}
+
+function questionCard(p) {
+  const questions = Array.isArray(p.input.questions) ? p.input.questions : [];
+  const fields = questions.map((q, qi) => {
+    const name = `${p.requestId}-${qi}`;
+    const other = h('input', { type: 'text', class: 'other', placeholder: 'その他（自由に入力）' });
+    const opts = (q.options ?? []).map((o) => h('label', { class: 'opt' },
+      h('input', { type: q.multiSelect ? 'checkbox' : 'radio', name, value: o.label }),
+      h('span', {}, h('b', {}, o.label), o.description ? h('span', { class: 'desc' }, o.description) : null)));
+    const el = h('fieldset', {}, h('legend', {}, q.header ? `${q.header}　` : '', h('span', {}, q.question)), ...opts, other);
+    el._value = () => {
+      const picked = [...el.querySelectorAll('input:checked')].map((i) => i.value);
+      if (other.value.trim()) picked.push(other.value.trim());
+      return picked.join(', ');
+    };
+    return { q, el };
+  });
+  const card = h('div', { class: 'req-card' },
+    h('div', { class: 'req-head' }, h('span', { class: 'req-kind' }, 'Claude からの質問')),
+    ...fields.map((f) => f.el),
+    h('div', { class: 'req-actions' },
+      h('button', {
+        class: 'send',
+        onclick: () => {
+          const answers = {};
+          for (const f of fields) {
+            const v = f.el._value();
+            f.el.classList.toggle('missing', !v);
+            if (v) answers[f.q.question] = v;
+          }
+          if (Object.keys(answers).length < fields.length) return;
+          answerRequest(p, { behavior: 'allow', answers }, card);
+        },
+      }, '回答する'),
+      h('button', { onclick: () => answerRequest(p, { behavior: 'deny', message: 'ユーザーは質問に答えずに断りました' }, card) }, '答えずに断る')));
+  return card;
+}
+
+async function sendMessage() {
+  const text = $('msg').value.trim();
+  if (!text || !state.s || $('send').disabled) return;
+  const id = state.s;
+  sending = true;
+  renderRunner();
+  try {
+    setRunner(await postJson('/api/runner/send', { id, text }));
+    drafts.delete(id);
+    if (state.s === id) $('msg').value = '';
+    const box = $('events');
+    box.scrollTop = box.scrollHeight;
+  } catch (e) {
+    showRunnerError(e.message);
+  } finally {
+    sending = false;
+    renderRunner();
+  }
+}
+
+async function stopRunner() {
+  try {
+    setRunner(await postJson('/api/runner/stop', { id: state.s }));
+  } catch (e) {
+    showRunnerError(e.message);
+  }
+}
+
 // ---------- 表示切り替え ----------
 function loadToggles() {
   try {
@@ -819,6 +977,15 @@ function bind() {
   $('events').addEventListener('scroll', () => requestAnimationFrame(updateTocActive), { passive: true });
   $('reload').addEventListener('click', reloadAll);
   $('reload-session').addEventListener('click', reloadAll);
+  $('send').addEventListener('click', sendMessage);
+  $('stop').addEventListener('click', stopRunner);
+  $('msg').addEventListener('keydown', (e) => {
+    // 変換を確定する Enter で送らないように、IME の入力中は除く（Safari は isComposing が立たず keyCode 229 になる）
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
   document.addEventListener('keydown', (e) => {
     const typing = ['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName);
     if (e.key === 'r' && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) {

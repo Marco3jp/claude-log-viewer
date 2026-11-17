@@ -95,6 +95,18 @@
         </div>
         <nav class="toc" id="toc"></nav>
       </div>
+      <div class="composer" id="composer">
+        <div class="pending" id="pending"></div>
+        <div class="composer-row">
+          <textarea id="msg" rows="2" placeholder="このセッションに続きを送る（Enter で送信・Shift+Enter で改行）"></textarea>
+          <div class="composer-side">
+            <span class="runner-state" id="runner-state"></span>
+            <button id="send" class="send">送信</button>
+            <button id="stop" hidden>止める</button>
+          </div>
+        </div>
+        <div class="runner-error" id="runner-error" hidden></div>
+      </div>
     </div>
   </main>
 </div>
