@@ -351,13 +351,20 @@ button:disabled { opacity: .5; cursor: default; }
 .session-list li.st-unread .status-mark { background: var(--st-unread); }
 .session-list li.unread .s-title { font-weight: 700; }
 
-/* 一覧から隠す */
+/* 一覧から隠す。ボタンの左はタイトルを行の背景色へぼかして、文字の途中で切れて見えないようにする */
+.session-list li { --row-bg: var(--panel); }
+.session-list li:hover { --row-bg: var(--panel-2); }
+.session-list li.active { --row-bg: var(--accent-soft); }
+.s-line .s-title-wrap { flex: 1; min-width: 0; position: relative; }
 .hide-btn {
-  flex-shrink: 0; visibility: hidden; border: 1px solid var(--border); background: var(--panel); border-radius: 4px; padding: 0 5px;
-  font-size: 11px; line-height: 1.6; color: var(--muted);
+  position: absolute; top: 0; right: 0; display: none; border: 0; border-radius: 0; padding: 0 0 0 18px;
+  background: linear-gradient(to right, transparent, var(--row-bg) 16px); font-size: 11px; line-height: 1.6; color: var(--muted);
 }
-.session-list li:hover > .s-line > .hide-btn, .session-list li.is-hidden > .s-line > .hide-btn { visibility: visible; }
+.hide-btn > span { display: block; border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; background: var(--panel); }
+.hide-btn:hover > span { border-color: var(--muted); color: var(--text); }
+.session-list li:hover > .s-line > .s-title-wrap > .hide-btn { display: block; }
 .hide-btn.rule { cursor: default; }
+.hide-btn.rule:hover > span { border-color: var(--border); color: var(--muted); }
 .session-list li.is-hidden { opacity: .5; }
 .settings-check { display: flex; align-items: baseline; gap: 6px; margin-bottom: 12px; font-size: 13px; cursor: pointer; }
 .settings-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; font-size: 12px; color: var(--muted); font-weight: 600; }

@@ -172,13 +172,18 @@ async function toggleHidden(id, on) {
 
 // 返答が無いものと設定の文字列で隠れているものは、ここでは戻せない
 function hideButton(s) {
-  if (s.hidden === 'empty') return h('span', { class: 'hide-btn rule', title: 'Claude の返答が無いので隠れています。設定の「非表示」で出せます', onclick: (e) => e.stopPropagation() }, '返答なし');
-  if (s.hidden === 'rule') return h('span', { class: 'hide-btn rule', title: '設定の「非表示」の文字列に当たっているので隠れています', onclick: (e) => e.stopPropagation() }, '条件');
+  if (s.hidden === 'empty') return h('span', { class: 'hide-btn rule', title: 'Claude の返答が無いので隠れています。設定の「非表示」で出せます', onclick: (e) => e.stopPropagation() }, h('span', {}, '返答なし'));
+  if (s.hidden === 'rule') return h('span', { class: 'hide-btn rule', title: '設定の「非表示」の文字列に当たっているので隠れています', onclick: (e) => e.stopPropagation() }, h('span', {}, '条件'));
   return h('button', {
     class: 'hide-btn',
     title: s.hidden ? '一覧に戻す' : '一覧から隠す',
     onclick: (e) => { e.stopPropagation(); toggleHidden(s.id, !s.hidden); },
-  }, s.hidden ? '戻す' : '隠す');
+  }, h('span', {}, s.hidden ? '戻す' : '隠す'));
+}
+
+// 隠すボタンはマウスを載せたときだけ、タイトルの右端に重ねて出す
+function titleWithHide(s, terms) {
+  return h('div', { class: 's-title-wrap' }, h('div', { class: 's-title', html: highlightHtml(sessionTitle(s), terms) }), hideButton(s));
 }
 
 function bookmarkButton(s) {
@@ -244,9 +249,8 @@ function renderCompactItem(s, terms) {
   h('div', { class: 's-line' },
     ...itemMarks(s),
     s.bookmarked ? h('span', { class: 'bm-mark' }, '★') : null,
-    h('div', { class: 's-title', html: highlightHtml(sessionTitle(s), terms) }),
-    s.subagents ? agentsToggle(s) : null,
-    hideButton(s)),
+    titleWithHide(s, terms),
+    s.subagents ? agentsToggle(s) : null),
   s.snippet ? h('div', { class: 's-snippet', html: highlightHtml(s.snippet, terms) }) : null);
   li.dataset.id = s.id;
   if (s.subagents && agentsOpen.has(s.id)) li.append(agentsTree(s.id));
@@ -338,7 +342,7 @@ function renderCard(s, terms) {
     class: itemClass(s),
     onclick: () => selectSession(s.id),
   },
-  h('div', { class: 's-line' }, ...itemMarks(s), bookmarkButton(s), h('div', { class: 's-title', html: highlightHtml(sessionTitle(s), terms) }), hideButton(s)),
+  h('div', { class: 's-line' }, ...itemMarks(s), bookmarkButton(s), titleWithHide(s, terms)),
   s.title && s.firstPrompt ? h('div', { class: 's-prompt', html: highlightHtml(s.firstPrompt, terms) }) : null,
   h('div', { class: 's-meta' },
     h('span', {}, fmtRange(s.start, s.end)),
