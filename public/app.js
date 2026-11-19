@@ -11,7 +11,7 @@ const TOGGLES = [
 ];
 
 const state = {
-  q: '', from: '', to: '', path: '', pathMode: 'any', sort: 'end', bm: '', empty: '', hidden: '', s: null, view: '',
+  q: '', from: '', to: '', path: '', pathMode: 'any', sort: 'end', bm: '', hidden: '', s: null, view: '',
   project: [], repo: [], ref: [], branch: [], tool: [], mcp: [],
 };
 let facetsCache = {};
@@ -132,7 +132,6 @@ async function loadList() {
   const hiddenParts = [data.hiddenEmpty ? `返答の無い ${data.hiddenEmpty} 件` : '', data.hiddenByUser ? `非表示の ${data.hiddenByUser} 件` : ''].filter(Boolean);
   const hidden = hiddenParts.length ? `・${hiddenParts.join('、')}を隠しています` : '';
   $('count').textContent = `${data.total} 件${shown} / 全 ${data.indexed} セッション${hidden}`;
-  $('sv-empty').checked = !!state.empty;
   $('sv-hidden').checked = !!state.hidden;
   $('side-count').textContent = `${data.total} 件`;
   $('bm-only').classList.toggle('on', !!state.bm);
@@ -167,8 +166,9 @@ async function toggleHidden(id, on) {
   if (res.ok) loadList();
 }
 
-// 設定の文字列で隠れているものは、ここでは戻せない
+// 返答が無いものと設定の文字列で隠れているものは、ここでは戻せない
 function hideButton(s) {
+  if (s.hidden === 'empty') return h('span', { class: 'hide-btn rule', title: 'Claude の返答が無いので隠れています。設定の「非表示」で出せます', onclick: (e) => e.stopPropagation() }, '返答なし');
   if (s.hidden === 'rule') return h('span', { class: 'hide-btn rule', title: '設定の「非表示」の文字列に当たっているので隠れています', onclick: (e) => e.stopPropagation() }, '条件');
   return h('button', {
     class: 'hide-btn',
@@ -1729,6 +1729,7 @@ async function loadStatusSettings() {
 function renderHideSettings(d) {
   $('hide-title').value = d.hideRules.title.join('\n');
   $('hide-text').value = d.hideRules.text.join('\n');
+  $('hide-empty').checked = d.hideRules.empty;
 }
 
 async function loadHideSettings() {
@@ -1741,7 +1742,7 @@ async function saveHideSettings() {
   const lines = (id) => $(id).value.split('\n').map((x) => x.trim()).filter(Boolean);
   $('hide-error').hidden = true;
   try {
-    renderHideSettings(await postJson('/api/settings', { hideRules: { title: lines('hide-title'), text: lines('hide-text') } }));
+    renderHideSettings(await postJson('/api/settings', { hideRules: { title: lines('hide-title'), text: lines('hide-text'), empty: $('hide-empty').checked } }));
     loadList();
   } catch (e) {
     $('hide-error').hidden = false;
@@ -1783,7 +1784,6 @@ function bind() {
   $('close-search').addEventListener('click', closeSearchView);
   $('bm-only').addEventListener('click', () => { state.bm = state.bm ? '' : '1'; loadList(); });
   $('sv-bm').addEventListener('change', () => { state.bm = $('sv-bm').checked ? '1' : ''; loadList(); });
-  $('sv-empty').addEventListener('change', () => { state.empty = $('sv-empty').checked ? '1' : ''; loadList(); });
   $('sv-hidden').addEventListener('change', () => { state.hidden = $('sv-hidden').checked ? '1' : ''; loadList(); });
   for (const id of ['from', 'to', 'pathMode', 'sort']) {
     $(id).addEventListener('change', () => { state[id] = $(id).value; loadList(); });

@@ -59,8 +59,7 @@
             </select>
           </label>
           <label class="sv-check"><input type="checkbox" id="sv-bm"> ブックマークだけ</label>
-          <label class="sv-check" title="/usage のようなローカルコマンドだけで、Claude の返答が無いセッション"><input type="checkbox" id="sv-empty"> 返答の無いセッションも出す</label>
-          <label class="sv-check" title="一覧の「隠す」で隠したものと、設定の「非表示」の文字列に当たったもの"><input type="checkbox" id="sv-hidden"> 非表示にしたセッションも出す</label>
+          <label class="sv-check" title="一覧の「隠す」で隠したものと、設定の「非表示」の条件に当たったもの"><input type="checkbox" id="sv-hidden"> 非表示にしたセッションも出す</label>
         </div>
         <div id="sv-chips" class="chips"></div>
       </div>
@@ -187,7 +186,8 @@
     </div>
   </div>
   <div class="keys-scroll settings-panel" data-panel="hide" hidden>
-    <p class="keys-help">ここに書いた文字列を含むセッションを、一覧から隠します。1 行に 1 つずつ書き、大文字と小文字は区別しません。隠したセッションは、詳細検索の「非表示にしたセッションも出す」で出せます。1 件ずつ隠すときは、一覧の行の右の「隠す」を押してください。この設定はサーバーのデータ用ディレクトリに保存します。</p>
+    <p class="keys-help">ここで選んだセッションを、一覧から隠します。文字列は 1 行に 1 つずつ書き、大文字と小文字は区別しません。隠したセッションは、詳細検索の「非表示にしたセッションも出す」で出せます。1 件ずつ隠すときは、一覧の行の右の「隠す」を押してください。この設定はサーバーのデータ用ディレクトリに保存します。</p>
+    <label class="settings-check"><input type="checkbox" id="hide-empty"> 返答の無いセッションを隠す（<code>/usage</code> のようなローカルコマンドだけで、Claude の返答が無いもの）</label>
     <label class="settings-field">タイトルに含まれていたら隠す（AI が付けたタイトル。無ければ最初のプロンプト）
       <textarea id="hide-title" rows="5" spellcheck="false" placeholder="Generate a commit message"></textarea>
     </label>
