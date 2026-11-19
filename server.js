@@ -91,7 +91,7 @@ async function handleRunner(req, res, url) {
   let out;
   if (url.pathname === '/api/runner/send') {
     if (!text) return json(res, 400, { error: '送る内容が空です' });
-    out = send(id, cwd, text, s?.permissionMode);
+    out = send(id, cwd, text, s?.permissionMode, s?.title ? null : s?.firstPrompt ?? text);
   } else if (url.pathname === '/api/runner/answer') {
     out = answer(id, String(body.requestId ?? ''), body);
   } else if (url.pathname === '/api/runner/interrupt') {
