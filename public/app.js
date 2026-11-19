@@ -11,7 +11,7 @@ const TOGGLES = [
 ];
 
 const state = {
-  q: '', from: '', to: '', path: '', pathMode: 'any', sort: 'end', bm: '', empty: '', s: null, view: '',
+  q: '', from: '', to: '', path: '', pathMode: 'any', sort: 'end', bm: '', empty: '', hidden: '', s: null, view: '',
   project: [], repo: [], ref: [], branch: [], tool: [], mcp: [],
 };
 let facetsCache = {};
@@ -129,9 +129,11 @@ async function loadList() {
   renderChips();
   renderFacets();
   const shown = data.total > data.sessions.length ? `（上位 ${data.sessions.length} 件を表示）` : '';
-  const hidden = data.hiddenEmpty ? `・返答の無い ${data.hiddenEmpty} 件を隠しています` : '';
+  const hiddenParts = [data.hiddenEmpty ? `返答の無い ${data.hiddenEmpty} 件` : '', data.hiddenByUser ? `非表示の ${data.hiddenByUser} 件` : ''].filter(Boolean);
+  const hidden = hiddenParts.length ? `・${hiddenParts.join('、')}を隠しています` : '';
   $('count').textContent = `${data.total} 件${shown} / 全 ${data.indexed} セッション${hidden}`;
   $('sv-empty').checked = !!state.empty;
+  $('sv-hidden').checked = !!state.hidden;
   $('side-count').textContent = `${data.total} 件`;
   $('bm-only').classList.toggle('on', !!state.bm);
   $('sv-bm').checked = !!state.bm;
@@ -160,6 +162,21 @@ async function toggleBookmark(id, on) {
   loadList();
 }
 
+async function toggleHidden(id, on) {
+  const res = await fetch(`/api/hide?id=${encodeURIComponent(id)}&on=${on ? 1 : 0}`, { method: 'POST' });
+  if (res.ok) loadList();
+}
+
+// 設定の文字列で隠れているものは、ここでは戻せない
+function hideButton(s) {
+  if (s.hidden === 'rule') return h('span', { class: 'hide-btn rule', title: '設定の「非表示」の文字列に当たっているので隠れています', onclick: (e) => e.stopPropagation() }, '条件');
+  return h('button', {
+    class: 'hide-btn',
+    title: s.hidden ? '一覧に戻す' : '一覧から隠す',
+    onclick: (e) => { e.stopPropagation(); toggleHidden(s.id, !s.hidden); },
+  }, s.hidden ? '戻す' : '隠す');
+}
+
 function bookmarkButton(s) {
   return h('button', {
     class: `bm-btn${s.bookmarked ? ' on' : ''}`,
@@ -175,7 +192,7 @@ function selectSession(id) {
 
 // 印は一覧を描き直さずに付け外しできるように、クラスで出す
 function itemClass(s) {
-  return [s.id === state.s ? 'active' : '', isUnread(s) ? 'unread' : '', runnerStates.get(s.id)?.pending?.length ? 'waiting' : ''].join(' ');
+  return [s.id === state.s ? 'active' : '', isUnread(s) ? 'unread' : '', runnerStates.get(s.id)?.pending?.length ? 'waiting' : '', s.hidden ? 'is-hidden' : ''].join(' ');
 }
 
 function itemMarks() {
@@ -192,7 +209,8 @@ function renderCompactItem(s, terms) {
     ...itemMarks(),
     s.bookmarked ? h('span', { class: 'bm-mark' }, '★') : null,
     h('div', { class: 's-title', html: highlightHtml(sessionTitle(s), terms) }),
-    s.subagents ? agentsToggle(s) : null),
+    s.subagents ? agentsToggle(s) : null,
+    hideButton(s)),
   s.snippet ? h('div', { class: 's-snippet', html: highlightHtml(s.snippet, terms) }) : null);
   li.dataset.id = s.id;
   if (s.subagents && agentsOpen.has(s.id)) li.append(agentsTree(s.id));
@@ -284,7 +302,7 @@ function renderCard(s, terms) {
     class: itemClass(s),
     onclick: () => selectSession(s.id),
   },
-  h('div', { class: 's-line' }, ...itemMarks(), bookmarkButton(s), h('div', { class: 's-title', html: highlightHtml(sessionTitle(s), terms) })),
+  h('div', { class: 's-line' }, ...itemMarks(), bookmarkButton(s), h('div', { class: 's-title', html: highlightHtml(sessionTitle(s), terms) }), hideButton(s)),
   s.title && s.firstPrompt ? h('div', { class: 's-prompt', html: highlightHtml(s.firstPrompt, terms) }) : null,
   h('div', { class: 's-meta' },
     h('span', {}, fmtRange(s.start, s.end)),
@@ -1598,6 +1616,7 @@ function setupKeys() {
   $('settings-close').addEventListener('click', () => $('settings-dialog').close());
   for (const b of document.querySelectorAll('.settings-tabs [data-tab]')) b.addEventListener('click', () => showSettingsTab(b.dataset.tab));
   $('sl-save').addEventListener('click', saveStatusSettings);
+  $('hide-save').addEventListener('click', saveHideSettings);
   $('send-delay').addEventListener('change', () => {
     const v = Number($('send-delay').value);
     if (!Number.isFinite(v)) return;
@@ -1644,7 +1663,7 @@ function renderKeyHints() {
   for (const id of ['reload', 'reload-session']) $(id).title = title('一覧と表示中のセッションを読み直す', 'reload');
   $('find-prev').title = title('前へ', 'find.prev');
   $('find-next').title = title('次へ', 'find.next');
-  $('open-settings').title = title('キー操作・通知・ステータスラインの設定', 'keys.open');
+  $('open-settings').title = title('キー操作・通知・ステータスライン・非表示の設定', 'keys.open');
   const send = key('composer.send');
   const newline = key('composer.newline');
   const hint = [send && `${send} で送信`, newline && `${newline} で改行`].filter(Boolean).join('・');
@@ -1685,6 +1704,7 @@ function openSettings() {
   renderKeyRows();
   renderNotifyButton();
   loadStatusSettings();
+  loadHideSettings();
   $('send-delay').value = sendDelay();
   let tab = 'keys';
   try {
@@ -1704,6 +1724,29 @@ async function loadStatusSettings() {
   try {
     renderStatusSettings(await (await fetch('/api/settings')).json());
   } catch {}
+}
+
+function renderHideSettings(d) {
+  $('hide-title').value = d.hideRules.title.join('\n');
+  $('hide-text').value = d.hideRules.text.join('\n');
+}
+
+async function loadHideSettings() {
+  try {
+    renderHideSettings(await (await fetch('/api/settings')).json());
+  } catch {}
+}
+
+async function saveHideSettings() {
+  const lines = (id) => $(id).value.split('\n').map((x) => x.trim()).filter(Boolean);
+  $('hide-error').hidden = true;
+  try {
+    renderHideSettings(await postJson('/api/settings', { hideRules: { title: lines('hide-title'), text: lines('hide-text') } }));
+    loadList();
+  } catch (e) {
+    $('hide-error').hidden = false;
+    $('hide-error').textContent = e.message;
+  }
 }
 
 async function saveStatusSettings() {
@@ -1741,6 +1784,7 @@ function bind() {
   $('bm-only').addEventListener('click', () => { state.bm = state.bm ? '' : '1'; loadList(); });
   $('sv-bm').addEventListener('change', () => { state.bm = $('sv-bm').checked ? '1' : ''; loadList(); });
   $('sv-empty').addEventListener('change', () => { state.empty = $('sv-empty').checked ? '1' : ''; loadList(); });
+  $('sv-hidden').addEventListener('change', () => { state.hidden = $('sv-hidden').checked ? '1' : ''; loadList(); });
   for (const id of ['from', 'to', 'pathMode', 'sort']) {
     $(id).addEventListener('change', () => { state[id] = $(id).value; loadList(); });
   }

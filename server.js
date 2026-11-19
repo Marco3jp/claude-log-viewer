@@ -4,9 +4,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { refresh, takeChanges, search, suggestPaths, sessionDetail, agentEvents, subagents, getSession, recentCwds, PROJECTS_DIR } from './lib/index.js';
 import { renderStatus, clearStatusCache, claudeStatusCommand } from './lib/statusline.js';
-import { getSettings, setStatusLine } from './lib/settings.js';
+import { getSettings, setStatusLine, setHideRules } from './lib/settings.js';
 import { sendViaTmux } from './lib/tmux.js';
 import { setBookmark } from './lib/bookmarks.js';
+import { setHidden } from './lib/hidden.js';
 import { getMemo, setMemo, MEMO_MAX } from './lib/memos.js';
 import { send, create, answer, interrupt, stopAll, beginClosing, busyIds, runnerState, runnerCwd, openElsewhere, onRunnerChange } from './lib/runner.js';
 
@@ -110,10 +111,16 @@ async function handleSettings(req, res) {
   if (req.method !== 'POST') return json(res, 405, { error: 'GET or POST only' });
   if (!(req.headers['content-type'] ?? '').startsWith('application/json')) return json(res, 415, { error: 'application/json only' });
   const body = await readJson(req);
-  const out = setStatusLine(body.statusLine ?? {});
-  if (out.error) return json(res, 400, { error: out.error });
-  clearStatusCache();
-  return json(res, 200, { ...out.settings, claudeStatusCommand: claudeStatusCommand() });
+  if (body.hideRules) {
+    const out = setHideRules(body.hideRules);
+    if (out.error) return json(res, 400, { error: out.error });
+  }
+  if (body.statusLine) {
+    const out = setStatusLine(body.statusLine);
+    if (out.error) return json(res, 400, { error: out.error });
+    clearStatusCache();
+  }
+  return json(res, 200, { ...getSettings(), claudeStatusCommand: claudeStatusCommand() });
 }
 
 async function handleMemo(req, res, url) {
@@ -183,6 +190,12 @@ const server = http.createServer(async (req, res) => {
       const id = url.searchParams.get('id') ?? '';
       if (!getSession(id)) return json(res, 404, { error: 'not found' });
       return json(res, 200, { id, bookmarked: setBookmark(id, url.searchParams.get('on') === '1') });
+    }
+    if (url.pathname === '/api/hide') {
+      if (req.method !== 'POST') return json(res, 405, { error: 'POST only' });
+      const id = url.searchParams.get('id') ?? '';
+      if (!getSession(id)) return json(res, 404, { error: 'not found' });
+      return json(res, 200, { id, hidden: setHidden(id, url.searchParams.get('on') === '1') });
     }
     if (url.pathname === '/api/subagents') {
       const list = subagents(url.searchParams.get('id') ?? '');
