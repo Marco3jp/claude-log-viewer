@@ -12,7 +12,7 @@
     <div class="search-box">
       <div class="side-top">
         <button id="open-new" class="side-btn send">新規チャット</button>
-        <button id="open-settings" class="side-btn" title="キー操作・通知・ステータスラインの設定 (?)">設定</button>
+        <button id="open-settings" class="side-btn" title="キー操作・通知・ステータスライン・非表示の設定 (?)">設定</button>
       </div>
       <input id="q" type="search" placeholder="全文検索" autocomplete="off">
       <div class="side-actions">
@@ -59,7 +59,7 @@
             </select>
           </label>
           <label class="sv-check"><input type="checkbox" id="sv-bm"> ブックマークだけ</label>
-          <label class="sv-check" title="/usage のようなローカルコマンドだけで、Claude の返答が無いセッション"><input type="checkbox" id="sv-empty"> 返答の無いセッションも出す</label>
+          <label class="sv-check" title="一覧の「隠す」で隠したものと、設定の「非表示」の条件に当たったもの"><input type="checkbox" id="sv-hidden"> 非表示にしたセッションも出す</label>
         </div>
         <div id="sv-chips" class="chips"></div>
       </div>
@@ -136,6 +136,7 @@
     <button role="tab" data-tab="send">送信</button>
     <button role="tab" data-tab="notify">通知</button>
     <button role="tab" data-tab="status">ステータスライン</button>
+    <button role="tab" data-tab="hide">非表示</button>
   </nav>
   <div class="keys-scroll settings-panel" data-panel="keys">
     <table class="keys-table">
@@ -183,6 +184,23 @@
     <div class="keys-actions">
       <button id="sl-save" class="send">保存</button>
     </div>
+  </div>
+  <div class="keys-scroll settings-panel" data-panel="hide" hidden>
+    <p class="keys-help">ここで選んだセッションを、一覧から隠します。文字列は 1 行に 1 つずつ書き、大文字と小文字は区別しません。隠したセッションは、詳細検索の「非表示にしたセッションも出す」で出せます。1 件ずつ隠すときは、一覧の行の右の「隠す」を押してください。この設定はサーバーのデータ用ディレクトリに保存します。</p>
+    <label class="settings-check"><input type="checkbox" id="hide-empty"> 返答の無いセッションを隠す（<code>/usage</code> のようなローカルコマンドだけで、Claude の返答が無いもの）</label>
+    <label class="settings-field">タイトルに含まれていたら隠す（一覧に出るタイトル。無ければ最初のプロンプト）
+      <textarea id="hide-title" rows="5" spellcheck="false" placeholder="Generate a commit message"></textarea>
+    </label>
+    <label class="settings-field">タイトルか本文のどこかに含まれていたら隠す（全文検索と同じ範囲）
+      <textarea id="hide-text" rows="5" spellcheck="false"></textarea>
+    </label>
+    <div class="keys-error" id="hide-error" hidden></div>
+    <div class="keys-actions">
+      <button id="hide-save" class="send">保存</button>
+    </div>
+    <h3>「隠す」で隠したセッション</h3>
+    <p class="keys-help">新しく隠した順に並びます。タイトルを押すとそのセッションを開き、「戻す」で一覧に戻します。</p>
+    <ul class="hidden-list" id="hidden-list"></ul>
   </div>
 </dialog>
 <dialog class="keys-dialog new-dialog" id="new-dialog" data-keymap>

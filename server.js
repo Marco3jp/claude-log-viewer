@@ -4,11 +4,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { refresh, takeChanges, search, suggestPaths, sessionDetail, agentEvents, subagents, getSession, recentCwds, PROJECTS_DIR } from './lib/index.js';
 import { renderStatus, clearStatusCache, claudeStatusCommand } from './lib/statusline.js';
-import { getSettings, setStatusLine } from './lib/settings.js';
+import { getSettings, setStatusLine, setHideRules } from './lib/settings.js';
 import { sendViaTmux } from './lib/tmux.js';
 import { setBookmark } from './lib/bookmarks.js';
+import { setHidden, listHidden } from './lib/hidden.js';
 import { getMemo, setMemo, MEMO_MAX } from './lib/memos.js';
-import { send, create, answer, interrupt, stopAll, beginClosing, busyIds, runnerState, runnerCwd, openElsewhere, onRunnerChange } from './lib/runner.js';
+import { send, create, answer, interrupt, stopAll, beginClosing, busyIds, runnerState, runnerCwd, openElsewhere, otherStates, onRunnerChange } from './lib/runner.js';
 
 const PORT = Number(process.env.PORT) || 4317;
 // 会話ログにはコードや認証まわりの出力がそのまま入っているので、ループバック以外では待ち受けない
@@ -90,7 +91,7 @@ async function handleRunner(req, res, url) {
   let out;
   if (url.pathname === '/api/runner/send') {
     if (!text) return json(res, 400, { error: '送る内容が空です' });
-    out = send(id, cwd, text, s?.permissionMode);
+    out = send(id, cwd, text, s?.permissionMode, s?.title ? null : s?.firstPrompt ?? text);
   } else if (url.pathname === '/api/runner/answer') {
     out = answer(id, String(body.requestId ?? ''), body);
   } else if (url.pathname === '/api/runner/interrupt') {
@@ -110,10 +111,16 @@ async function handleSettings(req, res) {
   if (req.method !== 'POST') return json(res, 405, { error: 'GET or POST only' });
   if (!(req.headers['content-type'] ?? '').startsWith('application/json')) return json(res, 415, { error: 'application/json only' });
   const body = await readJson(req);
-  const out = setStatusLine(body.statusLine ?? {});
-  if (out.error) return json(res, 400, { error: out.error });
-  clearStatusCache();
-  return json(res, 200, { ...out.settings, claudeStatusCommand: claudeStatusCommand() });
+  if (body.hideRules) {
+    const out = setHideRules(body.hideRules);
+    if (out.error) return json(res, 400, { error: out.error });
+  }
+  if (body.statusLine) {
+    const out = setStatusLine(body.statusLine);
+    if (out.error) return json(res, 400, { error: out.error });
+    clearStatusCache();
+  }
+  return json(res, 200, { ...getSettings(), claudeStatusCommand: claudeStatusCommand() });
 }
 
 async function handleMemo(req, res, url) {
@@ -132,8 +139,15 @@ async function handleMemo(req, res, url) {
 }
 
 const listeners = new Set();
+let others = JSON.stringify(otherStates());
+const othersMessage = () => `event: others\ndata: ${others}\n\n`;
 setInterval(() => {
   refresh();
+  const next = JSON.stringify(otherStates());
+  if (next !== others) {
+    others = next;
+    for (const res of listeners) res.write(othersMessage());
+  }
   const { ids, replies } = takeChanges();
   if (!ids.length) return;
   const msg = `data: ${JSON.stringify({ ids, replies })}\n\n`;
@@ -166,6 +180,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store' });
       res.write('retry: 3000\n\n');
+      res.write(othersMessage());
       listeners.add(res);
       req.on('close', () => listeners.delete(res));
       return;
@@ -183,6 +198,20 @@ const server = http.createServer(async (req, res) => {
       const id = url.searchParams.get('id') ?? '';
       if (!getSession(id)) return json(res, 404, { error: 'not found' });
       return json(res, 200, { id, bookmarked: setBookmark(id, url.searchParams.get('on') === '1') });
+    }
+    if (url.pathname === '/api/hidden') {
+      return json(res, 200, listHidden().map(({ id, at }) => {
+        const s = getSession(id);
+        return { id, at, title: s ? s.title || s.firstPrompt || null : null, end: s?.end ?? null, exists: !!s };
+      }));
+    }
+    if (url.pathname === '/api/hide') {
+      if (req.method !== 'POST') return json(res, 405, { error: 'POST only' });
+      const id = url.searchParams.get('id') ?? '';
+      const on = url.searchParams.get('on') === '1';
+      // 会話ログが消えたセッションも、隠した一覧から外せるようにする
+      if (on && !getSession(id)) return json(res, 404, { error: 'not found' });
+      return json(res, 200, { id, hidden: setHidden(id, on) });
     }
     if (url.pathname === '/api/subagents') {
       const list = subagents(url.searchParams.get('id') ?? '');

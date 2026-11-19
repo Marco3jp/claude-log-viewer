@@ -11,7 +11,7 @@ const TOGGLES = [
 ];
 
 const state = {
-  q: '', from: '', to: '', path: '', pathMode: 'any', sort: 'end', bm: '', empty: '', s: null, view: '',
+  q: '', from: '', to: '', path: '', pathMode: 'any', sort: 'end', bm: '', hidden: '', s: null, view: '',
   project: [], repo: [], ref: [], branch: [], tool: [], mcp: [],
 };
 let facetsCache = {};
@@ -129,14 +129,19 @@ async function loadList() {
   renderChips();
   renderFacets();
   const shown = data.total > data.sessions.length ? `（上位 ${data.sessions.length} 件を表示）` : '';
-  const hidden = data.hiddenEmpty ? `・返答の無い ${data.hiddenEmpty} 件を隠しています` : '';
+  const hiddenParts = [data.hiddenEmpty ? `返答の無い ${data.hiddenEmpty} 件` : '', data.hiddenByUser ? `非表示の ${data.hiddenByUser} 件` : ''].filter(Boolean);
+  const hidden = hiddenParts.length ? `・${hiddenParts.join('、')}を隠しています` : '';
   $('count').textContent = `${data.total} 件${shown} / 全 ${data.indexed} セッション${hidden}`;
-  $('sv-empty').checked = !!state.empty;
+  $('sv-hidden').checked = !!state.hidden;
   $('side-count').textContent = `${data.total} 件`;
   $('bm-only').classList.toggle('on', !!state.bm);
   $('sv-bm').checked = !!state.bm;
   const terms = parseTerms(state.q);
-  for (const s of data.sessions) titles.set(s.id, sessionTitle(s));
+  listed.clear();
+  for (const s of data.sessions) {
+    titles.set(s.id, sessionTitle(s));
+    listed.set(s.id, s);
+  }
   $('list').replaceChildren(...data.sessions.map((s) => renderCompactItem(s, terms)));
   $('cards').replaceChildren(...data.sessions.map((s) => renderCard(s, terms)));
 }
@@ -160,6 +165,29 @@ async function toggleBookmark(id, on) {
   loadList();
 }
 
+async function toggleHidden(id, on) {
+  const res = await fetch(`/api/hide?id=${encodeURIComponent(id)}&on=${on ? 1 : 0}`, { method: 'POST' });
+  if (!res.ok) return;
+  loadList();
+  if ($('settings-dialog').open) loadHiddenList();
+}
+
+// 返答が無いものと設定の文字列で隠れているものは、ここでは戻せない
+function hideButton(s) {
+  if (s.hidden === 'empty') return h('span', { class: 'hide-btn rule', title: 'Claude の返答が無いので隠れています。設定の「非表示」で出せます', onclick: (e) => e.stopPropagation() }, h('span', {}, '返答なし'));
+  if (s.hidden === 'rule') return h('span', { class: 'hide-btn rule', title: '設定の「非表示」の文字列に当たっているので隠れています', onclick: (e) => e.stopPropagation() }, h('span', {}, '条件'));
+  return h('button', {
+    class: 'hide-btn',
+    title: s.hidden ? '一覧に戻す' : '一覧から隠す',
+    onclick: (e) => { e.stopPropagation(); toggleHidden(s.id, !s.hidden); },
+  }, h('span', {}, s.hidden ? '戻す' : '隠す'));
+}
+
+// 隠すボタンはマウスを載せたときだけ、タイトルの右端に重ねて出す
+function titleWithHide(s, terms) {
+  return h('div', { class: 's-title-wrap' }, h('div', { class: 's-title', html: highlightHtml(sessionTitle(s), terms) }), hideButton(s));
+}
+
 function bookmarkButton(s) {
   return h('button', {
     class: `bm-btn${s.bookmarked ? ' on' : ''}`,
@@ -173,13 +201,45 @@ function selectSession(id) {
   openSession(id);
 }
 
-// 印は一覧を描き直さずに付け外しできるように、クラスで出す
-function itemClass(s) {
-  return [s.id === state.s ? 'active' : '', isUnread(s) ? 'unread' : '', runnerStates.get(s.id)?.pending?.length ? 'waiting' : ''].join(' ');
+// tmux のタブの色と同じ並びで、確認待ち・作業中・バックグラウンド待ち・未読のどれか 1 つを出す
+const ACTIVITY_LABELS = {
+  ask: '確認待ち', busy: '作業中', bg: 'バックグラウンドのサブエージェントを待っています', unread: '新しい返事があります',
+};
+
+function activity(s) {
+  const r = runnerStates.get(s.id);
+  const o = otherStates.get(s.id);
+  if (r?.pending?.length || o?.status === 'waiting') return 'ask';
+  if (r?.running || o?.status === 'busy') return 'busy';
+  if (s.agentsRunning) return 'bg';
+  return isUnread(s) ? 'unread' : '';
 }
 
-function itemMarks() {
-  return [h('span', { class: 'unread-mark', title: '新しい返事があります' }), h('span', { class: 'waiting-mark' }, '確認待ち')];
+function activityTitle(s, a) {
+  const o = otherStates.get(s.id);
+  return a === 'ask' && o?.waitingFor ? `確認待ち（${o.waitingFor}）` : ACTIVITY_LABELS[a] ?? '';
+}
+
+// 印は一覧を描き直さずに付け外しできるように、クラスで出す
+function itemClass(s) {
+  const a = activity(s);
+  return [s.id === state.s ? 'active' : '', a ? `st-${a}` : '', isUnread(s) ? 'unread' : '', s.hidden ? 'is-hidden' : ''].join(' ');
+}
+
+function itemMarks(s) {
+  return [h('span', { class: 'status-mark', title: activityTitle(s, activity(s)) })];
+}
+
+function refreshMarks(id) {
+  const s = listed.get(id);
+  if (!s) return;
+  const a = activity(s);
+  for (const li of document.querySelectorAll(`.session-list li[data-id="${CSS.escape(id)}"]`)) {
+    for (const k of Object.keys(ACTIVITY_LABELS)) li.classList.toggle(`st-${k}`, k === a);
+    li.classList.toggle('unread', isUnread(s));
+    const mark = li.querySelector(':scope > .s-line > .status-mark');
+    if (mark) mark.title = activityTitle(s, a);
+  }
 }
 
 function renderCompactItem(s, terms) {
@@ -189,9 +249,9 @@ function renderCompactItem(s, terms) {
     onclick: () => selectSession(s.id),
   },
   h('div', { class: 's-line' },
-    ...itemMarks(),
+    ...itemMarks(s),
     s.bookmarked ? h('span', { class: 'bm-mark' }, '★') : null,
-    h('div', { class: 's-title', html: highlightHtml(sessionTitle(s), terms) }),
+    titleWithHide(s, terms),
     s.subagents ? agentsToggle(s) : null),
   s.snippet ? h('div', { class: 's-snippet', html: highlightHtml(s.snippet, terms) }) : null);
   li.dataset.id = s.id;
@@ -284,7 +344,7 @@ function renderCard(s, terms) {
     class: itemClass(s),
     onclick: () => selectSession(s.id),
   },
-  h('div', { class: 's-line' }, ...itemMarks(), bookmarkButton(s), h('div', { class: 's-title', html: highlightHtml(sessionTitle(s), terms) })),
+  h('div', { class: 's-line' }, ...itemMarks(s), bookmarkButton(s), titleWithHide(s, terms)),
   s.title && s.firstPrompt ? h('div', { class: 's-prompt', html: highlightHtml(s.firstPrompt, terms) }) : null,
   h('div', { class: 's-meta' },
     h('span', {}, fmtRange(s.start, s.end)),
@@ -498,7 +558,7 @@ function watchChanges() {
     const s = JSON.parse(e.data);
     const before = runnerStates.get(s.id)?.pending?.length ?? 0;
     runnerStates.set(s.id, s);
-    for (const li of document.querySelectorAll(`.session-list li[data-id="${CSS.escape(s.id)}"]`)) li.classList.toggle('waiting', s.pending.length > 0);
+    refreshMarks(s.id);
     if (s.pending.length > before && !watching(s.id)) {
       const p = s.pending[s.pending.length - 1];
       const what = p.toolName === 'AskUserQuestion' ? 'Claude から質問が来ています' : `${toolLabel(p.toolName)} の許可を待っています`;
@@ -506,6 +566,14 @@ function watchChanges() {
     }
     if (s.id === state.s && !s.running) loadStatus(s.id);
     setRunner(s);
+  });
+  // ターミナルなどで動いているセッションの状態。変わったときと、つないだときに全部届く
+  es.addEventListener('others', (e) => {
+    const next = JSON.parse(e.data);
+    const ids = new Set([...otherStates.keys(), ...Object.keys(next)]);
+    otherStates.clear();
+    for (const [id, v] of Object.entries(next)) otherStates.set(id, v);
+    for (const id of ids) refreshMarks(id);
   });
   // つなぎ直す間に届かなかった変化があるかもしれない
   es.addEventListener('open', () => { if (state.s) loadRunner(state.s); });
@@ -520,6 +588,8 @@ const READ_KEY = 'read-state';
 const NOTIFY_KEY = 'notify';
 const titles = new Map();
 const runnerStates = new Map();
+const otherStates = new Map();
+const listed = new Map(); // 一覧に出ているセッション
 
 // 初めて使ったときより前の返事は、未読にしない
 function loadRead() {
@@ -552,7 +622,7 @@ function markSeen() {
   if (!s || document.hidden || state.view === 'search' || !s.lastReply || s.lastReply.ts <= readAt(s.id)) return;
   readState.at[s.id] = s.lastReply.ts;
   saveRead();
-  for (const li of document.querySelectorAll(`.session-list li[data-id="${CSS.escape(s.id)}"]`)) li.classList.remove('unread');
+  refreshMarks(s.id);
 }
 
 function watching(id) {
@@ -1598,6 +1668,7 @@ function setupKeys() {
   $('settings-close').addEventListener('click', () => $('settings-dialog').close());
   for (const b of document.querySelectorAll('.settings-tabs [data-tab]')) b.addEventListener('click', () => showSettingsTab(b.dataset.tab));
   $('sl-save').addEventListener('click', saveStatusSettings);
+  $('hide-save').addEventListener('click', saveHideSettings);
   $('send-delay').addEventListener('change', () => {
     const v = Number($('send-delay').value);
     if (!Number.isFinite(v)) return;
@@ -1644,7 +1715,7 @@ function renderKeyHints() {
   for (const id of ['reload', 'reload-session']) $(id).title = title('一覧と表示中のセッションを読み直す', 'reload');
   $('find-prev').title = title('前へ', 'find.prev');
   $('find-next').title = title('次へ', 'find.next');
-  $('open-settings').title = title('キー操作・通知・ステータスラインの設定', 'keys.open');
+  $('open-settings').title = title('キー操作・通知・ステータスライン・非表示の設定', 'keys.open');
   const send = key('composer.send');
   const newline = key('composer.newline');
   const hint = [send && `${send} で送信`, newline && `${newline} で改行`].filter(Boolean).join('・');
@@ -1685,6 +1756,8 @@ function openSettings() {
   renderKeyRows();
   renderNotifyButton();
   loadStatusSettings();
+  loadHideSettings();
+  loadHiddenList();
   $('send-delay').value = sendDelay();
   let tab = 'keys';
   try {
@@ -1704,6 +1777,49 @@ async function loadStatusSettings() {
   try {
     renderStatusSettings(await (await fetch('/api/settings')).json());
   } catch {}
+}
+
+function renderHideSettings(d) {
+  $('hide-title').value = d.hideRules.title.join('\n');
+  $('hide-text').value = d.hideRules.text.join('\n');
+  $('hide-empty').checked = d.hideRules.empty;
+}
+
+async function loadHideSettings() {
+  try {
+    renderHideSettings(await (await fetch('/api/settings')).json());
+  } catch {}
+}
+
+async function loadHiddenList() {
+  let list;
+  try {
+    list = await (await fetch('/api/hidden')).json();
+  } catch {
+    return;
+  }
+  if (!list.length) {
+    $('hidden-list').replaceChildren(h('li', { class: 'none' }, '「隠す」で隠したセッションはありません'));
+    return;
+  }
+  $('hidden-list').replaceChildren(...list.map((x) => h('li', {},
+    x.exists
+      ? h('button', { class: 'hidden-title', title: '開く', onclick: () => { $('settings-dialog').close(); selectSession(x.id); } }, x.title ?? '(プロンプトなし)')
+      : h('span', { class: 'hidden-title gone', title: x.id }, '（会話ログが見つかりません）'),
+    h('span', { class: 'hidden-at', title: x.end ? `最後の更新 ${fmtTime(x.end)}` : '' }, x.at ? `${fmtTime(x.at)} に隠した` : ''),
+    h('button', { class: 'side-btn', onclick: () => toggleHidden(x.id, false) }, '戻す'))));
+}
+
+async function saveHideSettings() {
+  const lines = (id) => $(id).value.split('\n').map((x) => x.trim()).filter(Boolean);
+  $('hide-error').hidden = true;
+  try {
+    renderHideSettings(await postJson('/api/settings', { hideRules: { title: lines('hide-title'), text: lines('hide-text'), empty: $('hide-empty').checked } }));
+    loadList();
+  } catch (e) {
+    $('hide-error').hidden = false;
+    $('hide-error').textContent = e.message;
+  }
 }
 
 async function saveStatusSettings() {
@@ -1740,7 +1856,7 @@ function bind() {
   $('close-search').addEventListener('click', closeSearchView);
   $('bm-only').addEventListener('click', () => { state.bm = state.bm ? '' : '1'; loadList(); });
   $('sv-bm').addEventListener('change', () => { state.bm = $('sv-bm').checked ? '1' : ''; loadList(); });
-  $('sv-empty').addEventListener('change', () => { state.empty = $('sv-empty').checked ? '1' : ''; loadList(); });
+  $('sv-hidden').addEventListener('change', () => { state.hidden = $('sv-hidden').checked ? '1' : ''; loadList(); });
   for (const id of ['from', 'to', 'pathMode', 'sort']) {
     $(id).addEventListener('change', () => { state[id] = $(id).value; loadList(); });
   }
