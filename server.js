@@ -7,7 +7,7 @@ import { renderStatus, clearStatusCache, claudeStatusCommand } from './lib/statu
 import { getSettings, setStatusLine, setHideRules } from './lib/settings.js';
 import { sendViaTmux } from './lib/tmux.js';
 import { setBookmark } from './lib/bookmarks.js';
-import { setHidden } from './lib/hidden.js';
+import { setHidden, listHidden } from './lib/hidden.js';
 import { getMemo, setMemo, MEMO_MAX } from './lib/memos.js';
 import { send, create, answer, interrupt, stopAll, beginClosing, busyIds, runnerState, runnerCwd, openElsewhere, otherStates, onRunnerChange } from './lib/runner.js';
 
@@ -199,11 +199,19 @@ const server = http.createServer(async (req, res) => {
       if (!getSession(id)) return json(res, 404, { error: 'not found' });
       return json(res, 200, { id, bookmarked: setBookmark(id, url.searchParams.get('on') === '1') });
     }
+    if (url.pathname === '/api/hidden') {
+      return json(res, 200, listHidden().map(({ id, at }) => {
+        const s = getSession(id);
+        return { id, at, title: s ? s.title || s.firstPrompt || null : null, end: s?.end ?? null, exists: !!s };
+      }));
+    }
     if (url.pathname === '/api/hide') {
       if (req.method !== 'POST') return json(res, 405, { error: 'POST only' });
       const id = url.searchParams.get('id') ?? '';
-      if (!getSession(id)) return json(res, 404, { error: 'not found' });
-      return json(res, 200, { id, hidden: setHidden(id, url.searchParams.get('on') === '1') });
+      const on = url.searchParams.get('on') === '1';
+      // 会話ログが消えたセッションも、隠した一覧から外せるようにする
+      if (on && !getSession(id)) return json(res, 404, { error: 'not found' });
+      return json(res, 200, { id, hidden: setHidden(id, on) });
     }
     if (url.pathname === '/api/subagents') {
       const list = subagents(url.searchParams.get('id') ?? '');

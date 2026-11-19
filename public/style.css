@@ -366,6 +366,13 @@ button:disabled { opacity: .5; cursor: default; }
 .hide-btn.rule { cursor: default; }
 .hide-btn.rule:hover > span { border-color: var(--border); color: var(--muted); }
 .session-list li.is-hidden { opacity: .5; }
+.hidden-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
+.hidden-list li { display: flex; align-items: center; gap: 10px; padding: 6px 2px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.hidden-list li.none { color: var(--muted); font-size: 12px; }
+.hidden-title { flex: 1; min-width: 0; text-align: left; border: 0; background: none; padding: 0; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.hidden-title:hover { color: var(--tool); text-decoration: underline; }
+.hidden-title.gone { color: var(--muted); }
+.hidden-at { flex-shrink: 0; color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .settings-check { display: flex; align-items: baseline; gap: 6px; margin-bottom: 12px; font-size: 13px; cursor: pointer; }
 .settings-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; font-size: 12px; color: var(--muted); font-weight: 600; }
 .settings-field textarea {

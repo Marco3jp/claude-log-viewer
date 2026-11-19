@@ -167,7 +167,9 @@ async function toggleBookmark(id, on) {
 
 async function toggleHidden(id, on) {
   const res = await fetch(`/api/hide?id=${encodeURIComponent(id)}&on=${on ? 1 : 0}`, { method: 'POST' });
-  if (res.ok) loadList();
+  if (!res.ok) return;
+  loadList();
+  if ($('settings-dialog').open) loadHiddenList();
 }
 
 // 返答が無いものと設定の文字列で隠れているものは、ここでは戻せない
@@ -1755,6 +1757,7 @@ function openSettings() {
   renderNotifyButton();
   loadStatusSettings();
   loadHideSettings();
+  loadHiddenList();
   $('send-delay').value = sendDelay();
   let tab = 'keys';
   try {
@@ -1786,6 +1789,25 @@ async function loadHideSettings() {
   try {
     renderHideSettings(await (await fetch('/api/settings')).json());
   } catch {}
+}
+
+async function loadHiddenList() {
+  let list;
+  try {
+    list = await (await fetch('/api/hidden')).json();
+  } catch {
+    return;
+  }
+  if (!list.length) {
+    $('hidden-list').replaceChildren(h('li', { class: 'none' }, '「隠す」で隠したセッションはありません'));
+    return;
+  }
+  $('hidden-list').replaceChildren(...list.map((x) => h('li', {},
+    x.exists
+      ? h('button', { class: 'hidden-title', title: '開く', onclick: () => { $('settings-dialog').close(); selectSession(x.id); } }, x.title ?? '(プロンプトなし)')
+      : h('span', { class: 'hidden-title gone', title: x.id }, '（会話ログが見つかりません）'),
+    h('span', { class: 'hidden-at', title: x.end ? `最後の更新 ${fmtTime(x.end)}` : '' }, x.at ? `${fmtTime(x.at)} に隠した` : ''),
+    h('button', { class: 'side-btn', onclick: () => toggleHidden(x.id, false) }, '戻す'))));
 }
 
 async function saveHideSettings() {
