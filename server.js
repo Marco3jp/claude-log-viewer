@@ -9,7 +9,7 @@ import { sendViaTmux } from './lib/tmux.js';
 import { setBookmark } from './lib/bookmarks.js';
 import { setHidden } from './lib/hidden.js';
 import { getMemo, setMemo, MEMO_MAX } from './lib/memos.js';
-import { send, create, answer, interrupt, stopAll, beginClosing, busyIds, runnerState, runnerCwd, openElsewhere, onRunnerChange } from './lib/runner.js';
+import { send, create, answer, interrupt, stopAll, beginClosing, busyIds, runnerState, runnerCwd, openElsewhere, otherStates, onRunnerChange } from './lib/runner.js';
 
 const PORT = Number(process.env.PORT) || 4317;
 // 会話ログにはコードや認証まわりの出力がそのまま入っているので、ループバック以外では待ち受けない
@@ -139,8 +139,15 @@ async function handleMemo(req, res, url) {
 }
 
 const listeners = new Set();
+let others = JSON.stringify(otherStates());
+const othersMessage = () => `event: others\ndata: ${others}\n\n`;
 setInterval(() => {
   refresh();
+  const next = JSON.stringify(otherStates());
+  if (next !== others) {
+    others = next;
+    for (const res of listeners) res.write(othersMessage());
+  }
   const { ids, replies } = takeChanges();
   if (!ids.length) return;
   const msg = `data: ${JSON.stringify({ ids, replies })}\n\n`;
@@ -173,6 +180,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/events') {
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store' });
       res.write('retry: 3000\n\n');
+      res.write(othersMessage());
       listeners.add(res);
       req.on('close', () => listeners.delete(res));
       return;

@@ -137,7 +137,11 @@ async function loadList() {
   $('bm-only').classList.toggle('on', !!state.bm);
   $('sv-bm').checked = !!state.bm;
   const terms = parseTerms(state.q);
-  for (const s of data.sessions) titles.set(s.id, sessionTitle(s));
+  listed.clear();
+  for (const s of data.sessions) {
+    titles.set(s.id, sessionTitle(s));
+    listed.set(s.id, s);
+  }
   $('list').replaceChildren(...data.sessions.map((s) => renderCompactItem(s, terms)));
   $('cards').replaceChildren(...data.sessions.map((s) => renderCard(s, terms)));
 }
@@ -190,13 +194,45 @@ function selectSession(id) {
   openSession(id);
 }
 
-// 印は一覧を描き直さずに付け外しできるように、クラスで出す
-function itemClass(s) {
-  return [s.id === state.s ? 'active' : '', isUnread(s) ? 'unread' : '', runnerStates.get(s.id)?.pending?.length ? 'waiting' : '', s.hidden ? 'is-hidden' : ''].join(' ');
+// tmux のタブの色と同じ並びで、確認待ち・作業中・バックグラウンド待ち・未読のどれか 1 つを出す
+const ACTIVITY_LABELS = {
+  ask: '確認待ち', busy: '作業中', bg: 'バックグラウンドのサブエージェントを待っています', unread: '新しい返事があります',
+};
+
+function activity(s) {
+  const r = runnerStates.get(s.id);
+  const o = otherStates.get(s.id);
+  if (r?.pending?.length || o?.status === 'waiting') return 'ask';
+  if (r?.running || o?.status === 'busy') return 'busy';
+  if (s.agentsRunning) return 'bg';
+  return isUnread(s) ? 'unread' : '';
 }
 
-function itemMarks() {
-  return [h('span', { class: 'unread-mark', title: '新しい返事があります' }), h('span', { class: 'waiting-mark' }, '確認待ち')];
+function activityTitle(s, a) {
+  const o = otherStates.get(s.id);
+  return a === 'ask' && o?.waitingFor ? `確認待ち（${o.waitingFor}）` : ACTIVITY_LABELS[a] ?? '';
+}
+
+// 印は一覧を描き直さずに付け外しできるように、クラスで出す
+function itemClass(s) {
+  const a = activity(s);
+  return [s.id === state.s ? 'active' : '', a ? `st-${a}` : '', isUnread(s) ? 'unread' : '', s.hidden ? 'is-hidden' : ''].join(' ');
+}
+
+function itemMarks(s) {
+  return [h('span', { class: 'status-mark', title: activityTitle(s, activity(s)) })];
+}
+
+function refreshMarks(id) {
+  const s = listed.get(id);
+  if (!s) return;
+  const a = activity(s);
+  for (const li of document.querySelectorAll(`.session-list li[data-id="${CSS.escape(id)}"]`)) {
+    for (const k of Object.keys(ACTIVITY_LABELS)) li.classList.toggle(`st-${k}`, k === a);
+    li.classList.toggle('unread', isUnread(s));
+    const mark = li.querySelector(':scope > .s-line > .status-mark');
+    if (mark) mark.title = activityTitle(s, a);
+  }
 }
 
 function renderCompactItem(s, terms) {
@@ -206,7 +242,7 @@ function renderCompactItem(s, terms) {
     onclick: () => selectSession(s.id),
   },
   h('div', { class: 's-line' },
-    ...itemMarks(),
+    ...itemMarks(s),
     s.bookmarked ? h('span', { class: 'bm-mark' }, '★') : null,
     h('div', { class: 's-title', html: highlightHtml(sessionTitle(s), terms) }),
     s.subagents ? agentsToggle(s) : null,
@@ -302,7 +338,7 @@ function renderCard(s, terms) {
     class: itemClass(s),
     onclick: () => selectSession(s.id),
   },
-  h('div', { class: 's-line' }, ...itemMarks(), bookmarkButton(s), h('div', { class: 's-title', html: highlightHtml(sessionTitle(s), terms) }), hideButton(s)),
+  h('div', { class: 's-line' }, ...itemMarks(s), bookmarkButton(s), h('div', { class: 's-title', html: highlightHtml(sessionTitle(s), terms) }), hideButton(s)),
   s.title && s.firstPrompt ? h('div', { class: 's-prompt', html: highlightHtml(s.firstPrompt, terms) }) : null,
   h('div', { class: 's-meta' },
     h('span', {}, fmtRange(s.start, s.end)),
@@ -516,7 +552,7 @@ function watchChanges() {
     const s = JSON.parse(e.data);
     const before = runnerStates.get(s.id)?.pending?.length ?? 0;
     runnerStates.set(s.id, s);
-    for (const li of document.querySelectorAll(`.session-list li[data-id="${CSS.escape(s.id)}"]`)) li.classList.toggle('waiting', s.pending.length > 0);
+    refreshMarks(s.id);
     if (s.pending.length > before && !watching(s.id)) {
       const p = s.pending[s.pending.length - 1];
       const what = p.toolName === 'AskUserQuestion' ? 'Claude から質問が来ています' : `${toolLabel(p.toolName)} の許可を待っています`;
@@ -524,6 +560,14 @@ function watchChanges() {
     }
     if (s.id === state.s && !s.running) loadStatus(s.id);
     setRunner(s);
+  });
+  // ターミナルなどで動いているセッションの状態。変わったときと、つないだときに全部届く
+  es.addEventListener('others', (e) => {
+    const next = JSON.parse(e.data);
+    const ids = new Set([...otherStates.keys(), ...Object.keys(next)]);
+    otherStates.clear();
+    for (const [id, v] of Object.entries(next)) otherStates.set(id, v);
+    for (const id of ids) refreshMarks(id);
   });
   // つなぎ直す間に届かなかった変化があるかもしれない
   es.addEventListener('open', () => { if (state.s) loadRunner(state.s); });
@@ -538,6 +582,8 @@ const READ_KEY = 'read-state';
 const NOTIFY_KEY = 'notify';
 const titles = new Map();
 const runnerStates = new Map();
+const otherStates = new Map();
+const listed = new Map(); // 一覧に出ているセッション
 
 // 初めて使ったときより前の返事は、未読にしない
 function loadRead() {
@@ -570,7 +616,7 @@ function markSeen() {
   if (!s || document.hidden || state.view === 'search' || !s.lastReply || s.lastReply.ts <= readAt(s.id)) return;
   readState.at[s.id] = s.lastReply.ts;
   saveRead();
-  for (const li of document.querySelectorAll(`.session-list li[data-id="${CSS.escape(s.id)}"]`)) li.classList.remove('unread');
+  refreshMarks(s.id);
 }
 
 function watching(id) {

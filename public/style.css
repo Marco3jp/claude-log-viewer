@@ -341,16 +341,15 @@ button:disabled { opacity: .5; cursor: default; }
   .a-fg12 { color: #a8c4ff; } .a-fg13 { color: #e0b6ec; } .a-fg14 { color: #8fe3ee; } .a-fg15 { color: #ecebe7; }
 }
 
-/* 未読と確認待ちの印 */
-.unread-mark, .waiting-mark { display: none; }
-.session-list li.unread .unread-mark {
-  display: inline-block; flex-shrink: 0; width: 8px; height: 8px; margin-top: .45em; border-radius: 50%; background: var(--primary);
-}
+/* 状態の印。色は tmux のタブの色（作業中・確認待ち・返事あり・バックグラウンド待ち）に合わせる */
+:root { --st-busy: #ffc66d; --st-ask: #ff6b68; --st-unread: #589df6; --st-bg: #6a8759; }
+.status-mark { display: none; flex-shrink: 0; width: 8px; height: 8px; margin-top: .45em; border-radius: 50%; }
+.session-list li:is(.st-busy, .st-ask, .st-bg, .st-unread) .status-mark { display: inline-block; }
+.session-list li.st-busy .status-mark { background: var(--st-busy); animation: agent-pulse 1.4s ease-in-out infinite; }
+.session-list li.st-ask .status-mark { background: var(--st-ask); }
+.session-list li.st-bg .status-mark { background: var(--st-bg); }
+.session-list li.st-unread .status-mark { background: var(--st-unread); }
 .session-list li.unread .s-title { font-weight: 700; }
-.session-list li.waiting .waiting-mark {
-  display: inline-block; flex-shrink: 0; font-size: 10.5px; line-height: 1.6; padding: 0 5px; border-radius: 4px;
-  color: #fff; background: var(--primary); white-space: nowrap;
-}
 
 /* 一覧から隠す */
 .hide-btn {
