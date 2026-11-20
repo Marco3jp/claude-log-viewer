@@ -15,15 +15,30 @@ function inline(src) {
     codes.push(`<code>${esc(code.trim() ? code.replace(/^ (.*) $/, '$1') : code)}</code>`);
     return `\u0001${codes.length - 1}\u0001`;
   });
+  // 作った <a> の属性の中に、後の置換で別のリンクや強調のタグが入ると引用符の対応が崩れるので、
+  // リンクは 1 回の置換で作って退避し、強調をかけ終えてから戻す
+  const links = [];
+  const link = (href, text) => {
+    links.push(`<a href="${href}" target="_blank" rel="noreferrer">${text}</a>`);
+    return `\u0002${links.length - 1}\u0002`;
+  };
   s = esc(s)
     .replace(/\\([\\`*_{}[\]()#+\-.!|~])/g, '$1')
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
-    .replace(/(^|[^"=>])(https?:\/\/[^\s<)）」、。]+)/g, '$1<a href="$2" target="_blank" rel="noreferrer">$2</a>')
+    .replace(
+      /\[([^\]]+)\]\((https?:\/\/[^\s)\u0001\u0002]+)\)|(https?:\/\/[^\s<)）」、。\u0001\u0002]+)/g,
+      (_, text, href, bare) => (bare ? link(bare, bare) : link(href, emphasis(text))),
+    );
+  return emphasis(s)
+    .replace(/\u0002(\d+)\u0002/g, (_, i) => links[i] ?? '')
+    .replace(/\u0001(\d+)\u0001/g, (_, i) => codes[i] ?? '');
+}
+
+function emphasis(s) {
+  return s
     .replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, '<strong>$1</strong>')
     .replace(/__(?=\S)([\s\S]*?\S)__/g, '<strong>$1</strong>')
     .replace(/(^|[^*\w])\*(?=\S)([^*\n]*?\S)\*(?!\*)/g, '$1<em>$2</em>')
     .replace(/~~(?=\S)([\s\S]*?\S)~~/g, '<del>$1</del>');
-  return s.replace(/\u0001(\d+)\u0001/g, (_, i) => codes[i]);
 }
 
 // バッククォートの中と \| ではセルを区切らない
