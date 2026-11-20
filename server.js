@@ -167,7 +167,13 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(403);
     return res.end('forbidden');
   }
-  const url = new URL(req.url, `http://${req.headers.host}`);
+  let url;
+  try {
+    url = new URL(req.url, `http://${req.headers.host}`);
+  } catch {
+    res.writeHead(400);
+    return res.end('bad request');
+  }
   try {
     if (url.pathname === '/api/runner' || url.pathname.startsWith('/api/runner/')) return await handleRunner(req, res, url);
     if (url.pathname === '/api/memo') return await handleMemo(req, res, url);
