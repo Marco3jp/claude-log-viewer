@@ -550,7 +550,6 @@ function watchChanges() {
     if (state.s && ids.includes(state.s)) live.session = true;
     runLive();
     for (const r of replies) {
-      if (watching(r.id)) continue;
       announce({ kind: '返事', title: r.title, body: r.reply.text, tag: `reply-${r.id}`, open: () => openAt(r.id, r.reply.uuid) });
     }
   });
@@ -559,7 +558,7 @@ function watchChanges() {
     const before = runnerStates.get(s.id)?.pending?.length ?? 0;
     runnerStates.set(s.id, s);
     refreshMarks(s.id);
-    if (s.pending.length > before && !watching(s.id)) {
+    if (s.pending.length > before) {
       const p = s.pending[s.pending.length - 1];
       const what = p.toolName === 'AskUserQuestion' ? 'Claude から質問が来ています' : `${toolLabel(p.toolName)} の許可を待っています`;
       announce({ kind: '確認待ち', title: titles.get(s.id) ?? 'セッション', body: what, tag: `waiting-${s.id}`, open: () => openAt(s.id) });
@@ -627,10 +626,6 @@ function markSeen() {
   refreshMarks(s.id);
 }
 
-function watching(id) {
-  return id === state.s && !document.hidden && state.view !== 'search';
-}
-
 function notifyOn() {
   try {
     return 'Notification' in window && Notification.permission === 'granted' && localStorage.getItem(NOTIFY_KEY) === '1';
@@ -672,7 +667,8 @@ async function toggleNotify() {
 // 一覧の印とは別に、オンのときだけ OS に通知する。押すとそのセッションを開く
 function announce({ kind, title, body, tag, open }) {
   if (!notifyOn()) return;
-  const n = new Notification(`${kind}: ${title}`, { body, tag });
+  // tag が同じ通知を差し替えるときも音を鳴らす。席を離れていても気づけるように
+  const n = new Notification(`${kind}: ${title}`, { body, tag, renotify: true });
   n.onclick = () => {
     window.focus();
     n.close();
@@ -689,7 +685,6 @@ function setReviews(next) {
   const touched = new Set([...reviews.pending, ...next.pending].map((p) => p.sessionId));
   reviews = next;
   for (const p of next.pending.filter((x) => x.status === 'waiting' && !before.has(x.id))) {
-    if (watching(p.sessionId)) continue;
     announce({
       kind: '確認待ち',
       title: titles.get(p.sessionId) ?? 'セッション',
