@@ -200,12 +200,28 @@ onReviewChange((state) => {
   for (const res of listeners) res.write(msg);
 });
 
+// よそのページに埋め込まれて「許可」を押させられないように、iframe への埋め込みを断る。
+// script-src を自分のファイルだけにして、返答の HTML に属性を差し込まれてもスクリプトが動かないようにする。
+// style-src の 'unsafe-inline' は、ANSI の色と表の列のそろえを style 属性で付けているため
+const SECURITY_HEADERS = {
+  'content-security-policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+  'x-frame-options': 'DENY',
+  'x-content-type-options': 'nosniff',
+};
+
 const server = http.createServer(async (req, res) => {
+  for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.setHeader(k, v);
   if (!ALLOWED_HOSTS.has(req.headers.host ?? '')) {
     res.writeHead(403);
     return res.end('forbidden');
   }
-  const url = new URL(req.url, `http://${req.headers.host}`);
+  let url;
+  try {
+    url = new URL(req.url, `http://${req.headers.host}`);
+  } catch {
+    res.writeHead(400);
+    return res.end('bad request');
+  }
   // hook はブラウザではないので Origin を付けない。代わりにデータ用ディレクトリの合言葉を確かめる
   if (url.pathname === '/api/hook/permission-request') {
     try {
