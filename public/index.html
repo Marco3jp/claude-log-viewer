@@ -137,6 +137,7 @@
     <button role="tab" data-tab="notify">通知</button>
     <button role="tab" data-tab="status">ステータスライン</button>
     <button role="tab" data-tab="hide">非表示</button>
+    <button role="tab" data-tab="reviews">承認</button>
   </nav>
   <div class="keys-scroll settings-panel" data-panel="keys">
     <table class="keys-table">
@@ -201,6 +202,25 @@
     <h3>「隠す」で隠したセッション</h3>
     <p class="keys-help">新しく隠した順に並びます。タイトルを押すとそのセッションを開き、「戻す」で一覧に戻します。</p>
     <ul class="hidden-list" id="hidden-list"></ul>
+  </div>
+  <div class="keys-scroll settings-panel" data-panel="reviews" hidden>
+    <p class="keys-help">ターミナルで動いているセッションの許可の確認を、Claude Code の hook からビュワーに送って答えられるようにします。<code>~/.claude/settings.json</code> の <code>hooks.PermissionRequest</code> に次のコマンドを登録してから、下の「受け付ける」をオンにしてください。この設定はサーバーのデータ用ディレクトリに保存します。</p>
+    <pre class="review-hook" id="review-hook"></pre>
+    <label class="settings-check"><input type="checkbox" id="review-enabled"> hook から届いた確認を受け付ける（オフのときは何も返さず、ターミナルにいつものダイアログが出ます）</label>
+    <label class="settings-check"><input type="checkbox" id="review-auto"> 下の条件に当たらないものは自動で許可する（オフのときは、すべてそのセッションの入力欄の上に出して人が答えます）</label>
+    <label class="settings-field">確認の中身を調べるモデル（<code>claude --model</code> に渡す名前）
+      <input type="text" id="review-model" spellcheck="false" autocomplete="off">
+    </label>
+    <h3>自動で許可せずに人に回す条件</h3>
+    <p class="keys-help">自動で許可するときだけ使います。モデルが判定に失敗したものは、条件によらず人に回します。</p>
+    <div id="review-conditions"></div>
+    <div class="keys-error" id="review-error" hidden></div>
+    <div class="keys-actions">
+      <button id="review-save" class="send">保存</button>
+    </div>
+    <h3>最近の判定</h3>
+    <p class="keys-help">サーバーを起動してからの判定が、新しい順に並びます。行にマウスを載せるとコマンドが出ます。</p>
+    <ol class="reviews-recent" id="reviews-recent-list"></ol>
   </div>
 </dialog>
 <dialog class="keys-dialog new-dialog" id="new-dialog" data-keymap>

@@ -209,7 +209,7 @@ const ACTIVITY_LABELS = {
 function activity(s) {
   const r = runnerStates.get(s.id);
   const o = otherStates.get(s.id);
-  if (r?.pending?.length || o?.status === 'waiting') return 'ask';
+  if (r?.pending?.length || o?.status === 'waiting' || reviewsFor(s.id).length) return 'ask';
   if (r?.running || o?.status === 'busy') return 'busy';
   if (s.agentsRunning) return 'bg';
   return isUnread(s) ? 'unread' : '';
@@ -575,6 +575,8 @@ function watchChanges() {
     for (const [id, v] of Object.entries(next)) otherStates.set(id, v);
     for (const id of ids) refreshMarks(id);
   });
+  // hook から届いた許可の確認。変わったときと、つないだときに全部届く
+  es.addEventListener('reviews', (e) => setReviews(JSON.parse(e.data)));
   // つなぎ直す間に届かなかった変化があるかもしれない
   es.addEventListener('open', () => { if (state.s) loadRunner(state.s); });
   document.addEventListener('visibilitychange', () => {
@@ -676,6 +678,101 @@ function announce({ kind, title, body, tag, open }) {
     n.close();
     open();
   };
+}
+
+// ---------- hook から届いた許可の確認 ----------
+let reviews = { pending: [], recent: [] };
+const EFFECT_LABELS = { read: '読むだけ', local_write: '手元を書き換える', remote_write: '外に書き込む' };
+
+function setReviews(next) {
+  const before = new Set(reviews.pending.filter((p) => p.status === 'waiting').map((p) => p.id));
+  const touched = new Set([...reviews.pending, ...next.pending].map((p) => p.sessionId));
+  reviews = next;
+  for (const p of next.pending.filter((x) => x.status === 'waiting' && !before.has(x.id))) {
+    if (watching(p.sessionId)) continue;
+    announce({
+      kind: '確認待ち',
+      title: titles.get(p.sessionId) ?? 'セッション',
+      body: p.analysis?.llm?.summary ?? String(p.input?.command ?? toolLabel(p.toolName)),
+      tag: `review-${p.id}`,
+      open: () => openAt(p.sessionId),
+    });
+  }
+  for (const id of touched) refreshMarks(id);
+  renderPending();
+  renderRecentReviews();
+}
+
+function reviewsFor(id) {
+  return reviews.pending.filter((p) => p.sessionId === id);
+}
+
+// 色の段階はサーバーが決める。調べている間は分かっていることが少ないので黄色にする
+function reviewLevel(p) {
+  return p.status === 'waiting' ? p.level : 'caution';
+}
+
+function reviewSource(p) {
+  const who = p.agentType ? `サブエージェント（${p.agentType}）` : 'メインの会話';
+  return h('div', { class: 'review-source' }, `ターミナルから・${who}${p.cwd ? `・${p.cwd}` : ''}`);
+}
+
+function reviewFacts(llm) {
+  if (!llm) return null;
+  const tags = [
+    [EFFECT_LABELS[llm.effect] ?? llm.effect, llm.effect === 'read' ? 'ok' : llm.effect === 'remote_write' ? 'ng' : ''],
+    [llm.reversible ? '元に戻せる' : '元に戻せない', llm.reversible ? 'ok' : 'ng'],
+    [llm.heavy ? '重い' : '軽い', llm.heavy ? 'ng' : 'ok'],
+  ];
+  return h('div', { class: 'review-facts' },
+    tags.map(([label, cls]) => h('span', { class: `review-tag ${cls}` }, label)),
+    h('span', { class: 'review-dest' }, `接続先: ${llm.destinations.length ? llm.destinations.join('、') : '手元だけ'}`));
+}
+
+async function answerReview(p, body, card) {
+  for (const b of card.querySelectorAll('button')) b.disabled = true;
+  try {
+    setReviews(await postJson('/api/reviews/answer', { id: p.id, ...body }));
+  } catch (e) {
+    for (const b of card.querySelectorAll('button')) b.disabled = false;
+    card.querySelector('.review-error')?.remove();
+    card.append(h('div', { class: 'review-error' }, e.message));
+  }
+}
+
+function reviewCard(p) {
+  const reason = h('input', { type: 'text', class: 'deny-reason', 'data-review': p.id, placeholder: '拒否の理由（Claude に伝わります・省略可）' });
+  const a = p.analysis;
+  const llm = a?.llm;
+  const card = h('div', { class: `req-card review-card ${reviewLevel(p)}` },
+    h('div', { class: 'req-head' },
+      h('span', { class: 'req-kind' }, p.status === 'analyzing' ? '許可の確認・調べています…' : '許可の確認'),
+      h('span', { class: 'name' }, toolLabel(p.toolName)),
+      h('span', { class: 'review-time' }, fmtTime(p.at, false))),
+    reviewSource(p),
+    llm ? h('div', { class: 'req-desc' }, llm.summary) : null,
+    p.status === 'analyzing'
+      ? h('div', { class: 'review-loading', role: 'status' }, h('span', { class: 'review-spinner' }), 'モデルで中身を調べています。終わると要約・接続先・自動で許可しなかった理由がここに出ます')
+      : null,
+    reviewFacts(llm),
+    p.hold?.length ? h('ul', { class: 'review-hold' }, p.hold.map((x) => h('li', {}, x))) : null,
+    llm?.concerns ? h('div', { class: 'review-concerns' }, `確かめること: ${llm.concerns}`) : null,
+    p.input?.description ? h('div', { class: 'req-label' }, `Claude による説明: ${p.input.description}`) : null,
+    h('pre', { class: 'req-code' }, p.toolName === 'Bash' ? String(p.input?.command ?? '') : JSON.stringify(p.input, null, 2)),
+    (a?.scripts ?? []).map((s) => h('details', {}, h('summary', {}, `スクリプトの中身: ${s.path}`), pre(s.text))),
+    h('div', { class: 'req-actions' },
+      h('button', { class: 'send', onclick: () => answerReview(p, { behavior: 'allow' }, card) }, '許可'),
+      reason,
+      h('button', { onclick: () => answerReview(p, { behavior: 'deny', message: reason.value.trim() }, card) }, '拒否')));
+  return card;
+}
+
+function renderRecentReviews() {
+  $('reviews-recent-list').replaceChildren(...reviews.recent.map((r) => h('li', { class: `review-by-${r.by}` },
+    h('span', { class: 'review-time' }, fmtTime(r.at, false)),
+    h('span', { class: 'review-by' }, r.byLabel),
+    h('span', { class: 'review-session' }, titles.get(r.sessionId) ?? ''),
+    h('span', { class: 'review-line', title: [r.command, ...(r.hold ?? [])].join('\n') }, r.summary ?? r.command))));
 }
 
 // ---------- ステータスライン ----------
@@ -1093,16 +1190,28 @@ function renderRunner() {
     : r.error;
   $('runner-error').hidden = !error;
   $('runner-error').textContent = error ?? '';
-  renderPending(r.pending);
+  renderPending();
 }
 
-function renderPending(list) {
+// ビュワーで動かしている claude の確認と、ターミナルから hook で届いた確認を同じ場所に出す
+function renderPending() {
   const box = $('pending');
-  // 答えを入力している途中のカードを作り直さないように、確認の組み合わせが変わったときだけ描き直す
-  const key = list.map((p) => p.requestId).join(',');
+  const list = runner?.pending ?? [];
+  const fromHook = state.s ? reviewsFor(state.s) : [];
+  // 答えを入力している途中のカードを作り直さないように、確認の組み合わせか状態が変わったときだけ描き直す
+  const key = [...list.map((p) => p.requestId), ...fromHook.map((p) => `${p.id}:${p.status}`)].join(',');
   if (box.dataset.key === key) return;
   box.dataset.key = key;
-  box.replaceChildren(...list.map((p) => (p.toolName === 'AskUserQuestion' ? questionCard(p) : permissionCard(p))));
+  // 調べ終わるとカードを作り直すので、それまでに打っていた拒否の理由と入力中の位置を引き継ぐ
+  const typed = new Map([...box.querySelectorAll('input[data-review]')].map((el) => [el.dataset.review, el.value]));
+  const focused = document.activeElement?.dataset?.review;
+  box.replaceChildren(
+    ...list.map((p) => (p.toolName === 'AskUserQuestion' ? questionCard(p) : permissionCard(p))),
+    ...fromHook.map(reviewCard));
+  for (const el of box.querySelectorAll('input[data-review]')) {
+    el.value = typed.get(el.dataset.review) ?? '';
+    if (el.dataset.review === focused) el.focus();
+  }
 }
 
 async function answerRequest(p, body, card) {
@@ -1669,6 +1778,7 @@ function setupKeys() {
   for (const b of document.querySelectorAll('.settings-tabs [data-tab]')) b.addEventListener('click', () => showSettingsTab(b.dataset.tab));
   $('sl-save').addEventListener('click', saveStatusSettings);
   $('hide-save').addEventListener('click', saveHideSettings);
+  $('review-save').addEventListener('click', saveReviewSettings);
   $('send-delay').addEventListener('change', () => {
     const v = Number($('send-delay').value);
     if (!Number.isFinite(v)) return;
@@ -1758,6 +1868,7 @@ function openSettings() {
   loadStatusSettings();
   loadHideSettings();
   loadHiddenList();
+  loadReviewSettings();
   $('send-delay').value = sendDelay();
   let tab = 'keys';
   try {
@@ -1808,6 +1919,42 @@ async function loadHiddenList() {
       : h('span', { class: 'hidden-title gone', title: x.id }, '（会話ログが見つかりません）'),
     h('span', { class: 'hidden-at', title: x.end ? `最後の更新 ${fmtTime(x.end)}` : '' }, x.at ? `${fmtTime(x.at)} に隠した` : ''),
     h('button', { class: 'side-btn', onclick: () => toggleHidden(x.id, false) }, '戻す'))));
+}
+
+const CONDITION_GROUPS = [['command', 'コマンドの中身で決める'], ['host', 'つなぐ先で決める'], ['model', 'モデルの判定で決める']];
+
+function renderReviewSettings(d) {
+  const r = d.review;
+  $('review-hook').textContent = d.hookCommand;
+  $('review-enabled').checked = r.enabled;
+  $('review-auto').checked = r.autoAllow;
+  $('review-model').value = r.model;
+  $('review-conditions').replaceChildren(...CONDITION_GROUPS.map(([group, title]) => h('fieldset', { class: 'review-conditions' },
+    h('legend', {}, title),
+    d.reviewConditions.filter((c) => c.group === group).map((c) => h('label', { class: 'settings-check' },
+      h('input', { type: 'checkbox', 'data-condition': c.id, checked: r.conditions[c.id] ?? c.on }),
+      ` ${c.label}`)))));
+}
+
+async function loadReviewSettings() {
+  renderRecentReviews();
+  try {
+    renderReviewSettings(await (await fetch('/api/settings')).json());
+  } catch {}
+}
+
+async function saveReviewSettings() {
+  const conditions = {};
+  for (const el of document.querySelectorAll('#review-conditions [data-condition]')) conditions[el.dataset.condition] = el.checked;
+  $('review-error').hidden = true;
+  try {
+    renderReviewSettings(await postJson('/api/settings', {
+      review: { enabled: $('review-enabled').checked, autoAllow: $('review-auto').checked, model: $('review-model').value, conditions },
+    }));
+  } catch (e) {
+    $('review-error').hidden = false;
+    $('review-error').textContent = e.message;
+  }
 }
 
 async function saveHideSettings() {
