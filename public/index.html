@@ -195,6 +195,9 @@
     <label class="settings-field">タイトルか本文のどこかに含まれていたら隠す（全文検索と同じ範囲）
       <textarea id="hide-text" rows="5" spellcheck="false"></textarea>
     </label>
+    <label class="settings-field">作業ディレクトリがこの下にあったら隠す（セッションを始めたディレクトリ。<code>/</code> か <code>~</code> から書く。<code>/private/var</code> と <code>/var</code> は同じ場所として扱う）
+      <textarea id="hide-dirs" rows="3" spellcheck="false" placeholder="/private/var/folders"></textarea>
+    </label>
     <div class="keys-error" id="hide-error" hidden></div>
     <div class="keys-actions">
       <button id="hide-save" class="send">保存</button>

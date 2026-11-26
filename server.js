@@ -2,7 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { refresh, takeChanges, search, suggestPaths, sessionDetail, agentEvents, subagents, getSession, recentCwds, PROJECTS_DIR } from './lib/index.js';
+import { refresh, takeChanges, search, suggestPaths, sessionDetail, agentEvents, subagents, getSession, recentCwds, isSessionHidden, PROJECTS_DIR } from './lib/index.js';
 import { renderStatus, clearStatusCache, claudeStatusCommand } from './lib/statusline.js';
 import { getSettings, setStatusLine, setHideRules, setReview } from './lib/settings.js';
 import { CONDITIONS } from './lib/review-conditions.js';
@@ -119,13 +119,18 @@ async function handleHook(req, res) {
 }
 
 async function handleReviews(req, res, url) {
-  if (url.pathname === '/api/reviews') return json(res, 200, reviewState());
+  if (url.pathname === '/api/reviews') return json(res, 200, withMuted(reviewState()));
   if (url.pathname === '/api/reviews/decisions') return json(res, 200, decisionsFor(url.searchParams.get('session') ?? ''));
   if (req.method !== 'POST') return json(res, 405, { error: 'POST only' });
   if (!(req.headers['content-type'] ?? '').startsWith('application/json')) return json(res, 415, { error: 'application/json only' });
   const body = await readJson(req);
   const out = answerReview(String(body.id ?? ''), body.behavior, body.message);
-  return out.error ? json(res, out.code ?? 400, { error: out.error }) : json(res, 200, out.state);
+  return out.error ? json(res, out.code ?? 400, { error: out.error }) : json(res, 200, withMuted(out.state));
+}
+
+// 隠したセッションはミュートとして扱い、ブラウザは確認待ちの通知を出さない
+function withMuted(state) {
+  return { ...state, pending: state.pending.map((p) => ({ ...p, muted: isSessionHidden(p.sessionId) })) };
 }
 
 // fs.watch は macOS のサンドボックス内で EMFILE になるなど環境によって使えないので、更新時刻を見に行く。
@@ -192,10 +197,10 @@ setInterval(() => {
 }, POLL_MS);
 setInterval(() => syncSessionStatuses(sessionStatuses()), REVIEW_SYNC_MS);
 onRunnerChange((state) => {
-  const msg = `event: runner\ndata: ${JSON.stringify(state)}\n\n`;
+  const msg = `event: runner\ndata: ${JSON.stringify({ ...state, muted: isSessionHidden(state.id) })}\n\n`;
   for (const res of listeners) res.write(msg);
 });
-const reviewsMessage = (state) => `event: reviews\ndata: ${JSON.stringify(state)}\n\n`;
+const reviewsMessage = (state) => `event: reviews\ndata: ${JSON.stringify(withMuted(state))}\n\n`;
 onReviewChange((state) => {
   const msg = reviewsMessage(state);
   for (const res of listeners) res.write(msg);

@@ -559,7 +559,7 @@ function watchChanges() {
     const before = runnerStates.get(s.id)?.pending?.length ?? 0;
     runnerStates.set(s.id, s);
     refreshMarks(s.id);
-    if (s.pending.length > before) {
+    if (s.pending.length > before && !s.muted) {
       const p = s.pending[s.pending.length - 1];
       const what = p.toolName === 'AskUserQuestion' ? 'Claude から質問が来ています' : `${toolLabel(p.toolName)} の許可を待っています`;
       announce({ kind: '確認待ち', title: titles.get(s.id) ?? 'セッション', body: what, tag: `waiting-${s.id}`, open: () => openAt(s.id) });
@@ -685,7 +685,7 @@ function setReviews(next) {
   const before = new Set(reviews.pending.filter((p) => p.status === 'waiting').map((p) => p.id));
   const touched = new Set([...reviews.pending, ...next.pending].map((p) => p.sessionId));
   reviews = next;
-  for (const p of next.pending.filter((x) => x.status === 'waiting' && !before.has(x.id))) {
+  for (const p of next.pending.filter((x) => x.status === 'waiting' && !before.has(x.id) && !x.muted)) {
     announce({
       kind: '確認待ち',
       title: titles.get(p.sessionId) ?? 'セッション',
@@ -1967,6 +1967,7 @@ async function loadStatusSettings() {
 function renderHideSettings(d) {
   $('hide-title').value = d.hideRules.title.join('\n');
   $('hide-text').value = d.hideRules.text.join('\n');
+  $('hide-dirs').value = (d.hideRules.dirs ?? []).join('\n');
   $('hide-empty').checked = d.hideRules.empty;
 }
 
@@ -2035,7 +2036,7 @@ async function saveHideSettings() {
   const lines = (id) => $(id).value.split('\n').map((x) => x.trim()).filter(Boolean);
   $('hide-error').hidden = true;
   try {
-    renderHideSettings(await postJson('/api/settings', { hideRules: { title: lines('hide-title'), text: lines('hide-text'), empty: $('hide-empty').checked } }));
+    renderHideSettings(await postJson('/api/settings', { hideRules: { title: lines('hide-title'), text: lines('hide-text'), dirs: lines('hide-dirs'), empty: $('hide-empty').checked } }));
     loadList();
   } catch (e) {
     $('hide-error').hidden = false;
