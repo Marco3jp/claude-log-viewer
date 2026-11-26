@@ -4,17 +4,21 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { refresh, takeChanges, search, suggestPaths, sessionDetail, agentEvents, subagents, getSession, recentCwds, PROJECTS_DIR } from './lib/index.js';
 import { renderStatus, clearStatusCache, claudeStatusCommand } from './lib/statusline.js';
-import { getSettings, setStatusLine, setHideRules } from './lib/settings.js';
+import { getSettings, setStatusLine, setHideRules, setReview } from './lib/settings.js';
+import { CONDITIONS } from './lib/review-conditions.js';
+import { hookCommand } from './lib/hook-command.js';
 import { sendViaTmux } from './lib/tmux.js';
 import { setBookmark } from './lib/bookmarks.js';
 import { setHidden, listHidden } from './lib/hidden.js';
 import { getMemo, setMemo, MEMO_MAX } from './lib/memos.js';
-import { send, create, answer, interrupt, stopAll, beginClosing, busyIds, runnerState, runnerCwd, openElsewhere, otherStates, onRunnerChange } from './lib/runner.js';
+import { send, create, answer, interrupt, stopAll, beginClosing, busyIds, runnerState, runnerCwd, openElsewhere, otherStates, onRunnerChange, sessionStatuses } from './lib/runner.js';
+import { review, reviewState, answerReview, onReviewChange, checkHookToken, hookToken, syncSessionStatuses } from './lib/review.js';
 
 const PORT = Number(process.env.PORT) || 4317;
 // 会話ログにはコードや認証まわりの出力がそのまま入っているので、ループバック以外では待ち受けない
 const HOST = '127.0.0.1';
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
+const HOOK_COMMAND = hookCommand({ port: PORT });
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
 
 function json(res, code, body) {
@@ -102,12 +106,40 @@ async function handleRunner(req, res, url) {
   return out.error ? json(res, out.code ?? 400, { error: out.error }) : json(res, 200, out.state);
 }
 
+// Claude Code の PermissionRequest hook から届く。決まるまで応答を返さずに待つ
+async function handleHook(req, res) {
+  if (req.method !== 'POST') return json(res, 405, { error: 'POST only' });
+  if (!checkHookToken(req.headers.authorization)) return json(res, 401, { error: 'unauthorized' });
+  const payload = await readJson(req);
+  const ac = new AbortController();
+  // ターミナルのダイアログで先に答えると、Claude Code が hook を止めて接続が切れる
+  res.on('close', () => { if (!res.writableEnded) ac.abort(); });
+  const decision = await review(payload, ac.signal);
+  if (!ac.signal.aborted) json(res, 200, { decision });
+}
+
+async function handleReviews(req, res, url) {
+  if (url.pathname === '/api/reviews') return json(res, 200, reviewState());
+  if (req.method !== 'POST') return json(res, 405, { error: 'POST only' });
+  if (!(req.headers['content-type'] ?? '').startsWith('application/json')) return json(res, 415, { error: 'application/json only' });
+  const body = await readJson(req);
+  const out = answerReview(String(body.id ?? ''), body.behavior, body.message);
+  return out.error ? json(res, out.code ?? 400, { error: out.error }) : json(res, 200, out.state);
+}
+
 // fs.watch は macOS のサンドボックス内で EMFILE になるなど環境によって使えないので、更新時刻を見に行く。
 // 変わっていなければ 1,000 セッションほどで十数ミリ秒
 const POLL_MS = 2000;
+// ターミナルで答えた確認のカードを、次の確認のカードと並んで見えないうちに片付ける。セッションのファイルは数十個なので軽い
+const REVIEW_SYNC_MS = 500;
+
+function settingsBody() {
+  return { ...getSettings(), claudeStatusCommand: claudeStatusCommand(), reviewConditions: CONDITIONS, hookCommand: HOOK_COMMAND };
+}
+
 // ステータスラインのコマンドはサーバーが動かすので、設定はブラウザではなくサーバー側に持つ
 async function handleSettings(req, res) {
-  if (req.method === 'GET') return json(res, 200, { ...getSettings(), claudeStatusCommand: claudeStatusCommand() });
+  if (req.method === 'GET') return json(res, 200, settingsBody());
   if (req.method !== 'POST') return json(res, 405, { error: 'GET or POST only' });
   if (!(req.headers['content-type'] ?? '').startsWith('application/json')) return json(res, 415, { error: 'application/json only' });
   const body = await readJson(req);
@@ -120,7 +152,11 @@ async function handleSettings(req, res) {
     if (out.error) return json(res, 400, { error: out.error });
     clearStatusCache();
   }
-  return json(res, 200, { ...getSettings(), claudeStatusCommand: claudeStatusCommand() });
+  if (body.review) {
+    const out = setReview(body.review);
+    if (out.error) return json(res, 400, { error: out.error });
+  }
+  return json(res, 200, settingsBody());
 }
 
 async function handleMemo(req, res, url) {
@@ -153,8 +189,14 @@ setInterval(() => {
   const msg = `data: ${JSON.stringify({ ids, replies })}\n\n`;
   for (const res of listeners) res.write(msg);
 }, POLL_MS);
+setInterval(() => syncSessionStatuses(sessionStatuses()), REVIEW_SYNC_MS);
 onRunnerChange((state) => {
   const msg = `event: runner\ndata: ${JSON.stringify(state)}\n\n`;
+  for (const res of listeners) res.write(msg);
+});
+const reviewsMessage = (state) => `event: reviews\ndata: ${JSON.stringify(state)}\n\n`;
+onReviewChange((state) => {
+  const msg = reviewsMessage(state);
   for (const res of listeners) res.write(msg);
 });
 
@@ -163,12 +205,23 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(403);
     return res.end('forbidden');
   }
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  // hook はブラウザではないので Origin を付けない。代わりにデータ用ディレクトリの合言葉を確かめる
+  if (url.pathname === '/api/hook/permission-request') {
+    try {
+      return await handleHook(req, res);
+    } catch (e) {
+      console.error(e);
+      if (!res.headersSent) json(res, 500, { error: String(e?.message ?? e) });
+      return;
+    }
+  }
   if (req.method !== 'GET' && req.method !== 'HEAD' && !ALLOWED_ORIGINS.has(req.headers.origin ?? '')) {
     res.writeHead(403);
     return res.end('forbidden');
   }
-  const url = new URL(req.url, `http://${req.headers.host}`);
   try {
+    if (url.pathname === '/api/reviews' || url.pathname === '/api/reviews/answer') return await handleReviews(req, res, url);
     if (url.pathname === '/api/runner' || url.pathname.startsWith('/api/runner/')) return await handleRunner(req, res, url);
     if (url.pathname === '/api/memo') return await handleMemo(req, res, url);
     if (url.pathname === '/api/cwds') return json(res, 200, recentCwds());
@@ -181,6 +234,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store' });
       res.write('retry: 3000\n\n');
       res.write(othersMessage());
+      res.write(reviewsMessage(reviewState()));
       listeners.add(res);
       req.on('close', () => listeners.delete(res));
       return;
@@ -239,6 +293,8 @@ const t = Date.now();
 refresh();
 takeChanges();
 console.log(`${PROJECTS_DIR} を読み込みました (${Date.now() - t}ms)`);
+// hook のスクリプトは合言葉のファイルが無いと何もせずに終わるので、最初の確認が届く前に作っておく
+hookToken();
 server.listen(PORT, HOST, () => console.log(`http://${HOST}:${PORT}/`));
 // 1 回目は作業中・確認待ちのセッションが終わるのを待って止め、2 回目は待たずに止める
 let closing = false;
