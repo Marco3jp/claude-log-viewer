@@ -519,12 +519,12 @@ kbd {
 .reviews-recent .review-time { margin-left: 0; flex: none; }
 .review-by { flex: none; font-weight: 600; }
 .review-session { flex: none; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
-.review-by-auto .review-by, .review-by-allow .review-by { color: #3f6b2f; }
+.review-by-intelligence-auto-approve .review-by, .review-by-allow .review-by { color: #3f6b2f; }
 .review-by-deny .review-by { color: var(--error); }
 .review-by-timeout .review-by, .review-by-gone .review-by { color: var(--muted); }
 .review-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 @media (prefers-color-scheme: dark) {
-  .review-tag.ok, .review-by-auto .review-by, .review-by-allow .review-by { color: #8fc27a; border-color: #6a8759; }
+  .review-tag.ok, .review-by-intelligence-auto-approve .review-by, .review-by-allow .review-by { color: #8fc27a; border-color: #6a8759; }
   .review-card.caution .req-kind, .review-card.caution .review-hold { color: #e8c15a; }
 }
 .review-hook { background: var(--code); padding: 6px 8px; border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-all; margin: 0 0 12px; }
@@ -535,3 +535,13 @@ fieldset.review-conditions .settings-check { margin-bottom: 6px; font-size: 12.5
 .review-spinner { flex: none; width: 12px; height: 12px; border: 2px solid #c99a10; border-right-color: transparent; border-radius: 50%; animation: review-spin 0.8s linear infinite; }
 @keyframes review-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .review-spinner { animation: none; border-right-color: #c99a10; opacity: 0.6; } }
+/* チャットの画面で、承認を経たツール呼び出しに付ける印 */
+.decision-badge { flex: none; font-size: 11px; padding: 0 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+.decision-badge.by-intelligence-auto-approve { border-color: #6a8759; background: color-mix(in srgb, #6a8759 16%, var(--panel)); color: #3f6b2f; font-weight: 600; }
+.decision-badge.by-deny { border-color: var(--error); color: var(--error); }
+.decision-block { margin: 6px 0; padding: 6px 10px; border-left: 3px solid var(--border); background: var(--panel-2); border-radius: 6px; }
+.decision-block.by-intelligence-auto-approve { border-left-color: #6a8759; }
+.decision-block.by-deny { border-left-color: var(--error); }
+@media (prefers-color-scheme: dark) {
+  .decision-badge.by-intelligence-auto-approve { color: #8fc27a; }
+}

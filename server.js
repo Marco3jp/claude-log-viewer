@@ -12,7 +12,7 @@ import { setBookmark } from './lib/bookmarks.js';
 import { setHidden, listHidden } from './lib/hidden.js';
 import { getMemo, setMemo, MEMO_MAX } from './lib/memos.js';
 import { send, create, answer, interrupt, stopAll, beginClosing, busyIds, runnerState, runnerCwd, openElsewhere, otherStates, onRunnerChange, sessionStatuses } from './lib/runner.js';
-import { review, reviewState, answerReview, onReviewChange, checkHookToken, hookToken, syncSessionStatuses } from './lib/review.js';
+import { review, reviewState, answerReview, onReviewChange, checkHookToken, hookToken, syncSessionStatuses, decisionsFor } from './lib/review.js';
 
 const PORT = Number(process.env.PORT) || 4317;
 // 会話ログにはコードや認証まわりの出力がそのまま入っているので、ループバック以外では待ち受けない
@@ -120,6 +120,7 @@ async function handleHook(req, res) {
 
 async function handleReviews(req, res, url) {
   if (url.pathname === '/api/reviews') return json(res, 200, reviewState());
+  if (url.pathname === '/api/reviews/decisions') return json(res, 200, decisionsFor(url.searchParams.get('session') ?? ''));
   if (req.method !== 'POST') return json(res, 405, { error: 'POST only' });
   if (!(req.headers['content-type'] ?? '').startsWith('application/json')) return json(res, 415, { error: 'application/json only' });
   const body = await readJson(req);
@@ -237,7 +238,7 @@ const server = http.createServer(async (req, res) => {
     return res.end('forbidden');
   }
   try {
-    if (url.pathname === '/api/reviews' || url.pathname === '/api/reviews/answer') return await handleReviews(req, res, url);
+    if (url.pathname === '/api/reviews' || url.pathname.startsWith('/api/reviews/')) return await handleReviews(req, res, url);
     if (url.pathname === '/api/runner' || url.pathname.startsWith('/api/runner/')) return await handleRunner(req, res, url);
     if (url.pathname === '/api/memo') return await handleMemo(req, res, url);
     if (url.pathname === '/api/cwds') return json(res, 200, recentCwds());

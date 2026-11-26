@@ -461,6 +461,7 @@ async function openSession(id, { reload = false, focusUuid = null, focusTool = n
   current = data;
   renderHead(data);
   renderEvents(box, data.events, data.session.cwd);
+  if (!decisions.has(id)) loadDecisions(id);
   settleOutgoing(id, data.events);
   if (data.session.subagents) loadAgents(id);
   else renderAgentsBar();
@@ -694,8 +695,83 @@ function setReviews(next) {
     });
   }
   for (const id of touched) refreshMarks(id);
+  // 新しく決まったものを、チャットの画面の印にも足す
+  for (const r of next.recent) {
+    const list = decisions.get(r.sessionId);
+    if (!list || !DECISION_BADGES[r.by] || list.some((x) => x.id === r.id)) continue;
+    list.push(r);
+    if (r.sessionId === state.s) applyDecisionBadges();
+  }
   renderPending();
   renderRecentReviews();
+}
+
+// ---------- チャットの画面に出す、承認の判定の印 ----------
+// 判定の記録はセッションごとに持つ。ターミナルで答えたものと時間切れには印を付けない
+const decisions = new Map();
+const DECISION_BADGES = { 'intelligence-auto-approve': 'AI が自動で許可', allow: 'ビュワーで許可', deny: 'ビュワーで拒否' };
+// ツールを呼ぶと決めてから許可の確認が届くまでの間に、時刻の記録が前後することがある
+const DECISION_SLACK_MS = 5000;
+// 判定の記録はコマンドをこの長さで切って残すので、ちょうどこの長さのものだけは先頭で突き合わせる
+const DECISION_COMMAND_MAX = 4000;
+
+function sameCommand(toolCommand, recorded) {
+  const c = String(toolCommand);
+  return recorded.length === DECISION_COMMAND_MAX ? c.startsWith(recorded) : c === recorded;
+}
+
+async function loadDecisions(id) {
+  try {
+    const res = await fetch(`/api/reviews/decisions?session=${encodeURIComponent(id)}`);
+    if (!res.ok) return;
+    decisions.set(id, await res.json());
+  } catch {
+    return;
+  }
+  if (id === state.s) applyDecisionBadges();
+}
+
+// hook の入力にはどのツール呼び出しへの確認かを示す ID が無いので、同じコマンドで、判定より前に出た呼び出しのうち一番近いものに付ける
+function applyDecisionBadges() {
+  const list = decisions.get(state.s);
+  if (!list?.length) return;
+  const tools = [...$('events').querySelectorAll('details.tool')].filter((d) => d._ev?.name === 'Bash' && d._ev.input?.command);
+  const used = new Set();
+  for (const d of [...list].sort((a, b) => a.at.localeCompare(b.at))) {
+    const limit = Date.parse(d.at) + DECISION_SLACK_MS;
+    let best = null;
+    for (const el of tools) {
+      if (used.has(el) || !sameCommand(el._ev.input.command, d.command)) continue;
+      const t = Date.parse(el._ev.ts);
+      if (t > limit) continue;
+      if (!best || t > Date.parse(best._ev.ts)) best = el;
+    }
+    if (!best) continue;
+    used.add(best);
+    setDecisionBadge(best, d);
+  }
+}
+
+function setDecisionBadge(details, d) {
+  if (details._decision?.id === d.id) return;
+  details._decision = d;
+  details.querySelector(':scope > summary > .decision-badge')?.remove();
+  const label = details.querySelector(':scope > summary > .ev-label');
+  label.before(h('span', { class: `decision-badge by-${d.by}`, title: d.summary ?? '' }, DECISION_BADGES[d.by]));
+  if (details.dataset.rendered) {
+    details.querySelector(':scope > .decision-block')?.remove();
+    details.querySelector(':scope > summary').after(decisionBlock(d));
+  }
+}
+
+function decisionBlock(d) {
+  return h('div', { class: `decision-block by-${d.by}` },
+    h('div', { class: 'req-label' }, `${DECISION_BADGES[d.by]}・${fmtTime(d.at, false)}${d.agentType ? `・サブエージェント（${d.agentType}）` : ''}`),
+    d.llm ? h('div', { class: 'req-desc' }, d.llm.summary) : null,
+    reviewFacts(d.llm),
+    d.llm?.concerns ? h('div', { class: 'review-concerns' }, `確かめること: ${d.llm.concerns}`) : null,
+    d.by !== 'intelligence-auto-approve' && d.hold?.length ? h('ul', { class: 'review-hold' }, d.hold.map((x) => h('li', {}, x))) : null,
+    d.by === 'deny' && d.message ? h('div', { class: 'review-concerns' }, `拒否の理由: ${d.message}`) : null);
 }
 
 function reviewsFor(id) {
@@ -1020,10 +1096,12 @@ function renderEvent(ev, cwd) {
         ev.isError ? h('span', { class: 'err' }, 'エラー') : null,
         h('span', { class: 'ev-label' }, fmtTime(ev.ts, false))));
     if (ev.id) details.dataset.id = ev.id;
+    details._ev = ev;
     details._render = () => {
       if (details.dataset.rendered) return;
       details.dataset.rendered = '1';
       const b = toolBody(ev, cwd);
+      if (details._decision) details.append(decisionBlock(details._decision));
       details.append(b);
       if (findTerms.length) highlight(b, findTerms);
     };
@@ -1053,6 +1131,7 @@ function renderEvents(container, events, cwd, nested = false) {
   }
   container.replaceChildren(frag);
   if (!nested) container._items = items;
+  applyDecisionBadges();
 }
 
 // ---------- セッション内検索 ----------
