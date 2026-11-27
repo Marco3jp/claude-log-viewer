@@ -1043,7 +1043,10 @@ function titleTools(s, titleEl) {
         saveTitle(s.id, '/api/title/generate', {}, tools);
       },
     }, 'AI で付け直す'),
-    s.titleBy === 'viewer' ? h('button', { title: 'ビュワーで付けたタイトルを消して、Claude Code のタイトルに戻します', onclick: () => saveTitle(s.id, '/api/title', { title: '' }, tools) }, '元に戻す') : null);
+  );
+  if (s.titleBy === 'viewer') {
+    tools.append(h('button', { title: 'ビュワーで付けたタイトルを消して、Claude Code のタイトルに戻します', onclick: () => saveTitle(s.id, '/api/title', { title: '' }, tools) }, '元に戻す'));
+  }
   return tools;
 }
 
@@ -1376,7 +1379,7 @@ function renderRunner() {
   $('send').disabled = !!(o && o.phase !== 'sent') || r.running || r.pending.length > 0 || blocked;
   const working = !!(r.alive && (r.running || r.pending.length));
   $('stop').disabled = !working;
-  $('wake').hidden = !!r.alive || viaTmux || blocked || !current;
+  $('wake').hidden = !!r.alive || viaTmux || blocked || !state.s;
   if (!working) disarmStop();
   // プロセスがまだ無いときは、次に起動するときのモード（会話ログから引き継ぐもの）を出す
   const mode = r.mode ?? current?.session.permissionMode ?? 'default';
