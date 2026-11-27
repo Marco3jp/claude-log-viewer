@@ -132,6 +132,8 @@ body.resizing.y, body.resizing.y * { cursor: row-resize !important; }
 .s-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .badge { font-size: 11px; border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; color: var(--muted); white-space: nowrap; }
 .badge.ref { color: var(--tool); border-color: currentColor; }
+.badge.ref.created { background: color-mix(in srgb, var(--tool) 14%, var(--panel)); font-weight: 600; }
+.badge.ref.prompt { font-weight: 600; }
 .badge.repo { color: var(--text); }
 .s-snippet { font-size: 12px; margin-top: 5px; background: var(--code); border-radius: 4px; padding: 4px 6px; word-break: break-all; }
 .bm-btn { border: 0; background: none; padding: 0 2px; font-size: 15px; line-height: 1.3; color: var(--muted); }

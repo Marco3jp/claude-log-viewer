@@ -361,12 +361,15 @@ function renderCard(s, terms) {
   h('div', { class: 's-badges' },
     s.repos.map((r) => h('span', { class: 'badge repo' }, r.replace(/^local:/, ''))),
     s.branches.slice(0, 2).map((b) => h('span', { class: 'badge' }, b)),
-    s.refs.slice(0, 6).map((r) => h('span', { class: 'badge ref' }, `${r.kind === 'pr' ? 'PR' : 'Issue'} ${r.ref.split('/')[1]}`)),
+    s.refs.slice(0, 6).map((r) => h('span', { class: `badge ref${r.role ? ` ${r.role}` : ''}`, title: REF_ROLE_LABELS[r.role] ?? r.ref },
+      `${r.role === 'created' ? '出した ' : r.role === 'prompt' ? '依頼元 ' : ''}${r.kind === 'pr' ? 'PR' : 'Issue'} ${r.ref.split('/')[1]}`)),
     s.refs.length > 6 ? h('span', { class: 'badge' }, `+${s.refs.length - 6}`) : null),
   s.snippet ? h('div', { class: 's-snippet', html: highlightHtml(s.snippet, terms) }) : null);
   li.dataset.id = s.id;
   return li;
 }
+
+const REF_ROLE_LABELS = { created: 'このセッションで出したもの', prompt: '最初のプロンプトにあったもの' };
 
 function chipLabel(key, value) {
   if (key === 'project') return projectLabels[value] ?? value;
@@ -956,10 +959,15 @@ function renderHead(d) {
       s.repos.map((r) => h('a', { href: '#', onclick: (e) => { e.preventDefault(); addFilter('repo', r); } }, r.replace(/^local:/, ''))),
       s.branches.map((b) => h('span', { class: 'badge' }, b))]);
   }
-  if (s.refs.length) {
-    rows.push(['Issue・PR', s.refs.map((r) => h('a', { href: refUrl(r.ref, r.kind), target: '_blank', rel: 'noreferrer' },
-      `${r.kind === 'pr' ? 'PR' : 'Issue'} ${r.ref}`))]);
-  }
+  // このセッションで出したものと、最初のプロンプトにあった依頼元は、ほかに触れたものと分けて出す
+  const refLinks = (list) => list.map((r) => h('a', { href: refUrl(r.ref, r.kind), target: '_blank', rel: 'noreferrer' },
+    `${r.kind === 'pr' ? 'PR' : 'Issue'} ${r.ref}`));
+  const created = s.refs.filter((r) => r.role === 'created');
+  const prompted = s.refs.filter((r) => r.role === 'prompt');
+  const others = s.refs.filter((r) => !r.role);
+  if (created.length) rows.push(['出した', refLinks(created)]);
+  if (prompted.length) rows.push(['依頼元', refLinks(prompted)]);
+  if (others.length) rows.push([created.length || prompted.length ? 'ほかの Issue・PR' : 'Issue・PR', refLinks(others)]);
   const files = d.files.write.length + d.files.read.length;
   if (files) {
     const ul = h('ul', {},
