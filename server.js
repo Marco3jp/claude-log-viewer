@@ -13,10 +13,15 @@ import { setTitle, generateTitle, TITLE_MAX } from './lib/titles.js';
 import { suggestCommands, suggestFiles } from './lib/suggest.js';
 import { setHidden, listHidden } from './lib/hidden.js';
 import { getMemo, setMemo, MEMO_MAX } from './lib/memos.js';
-import { send, create, answer, interrupt, stopAll, beginClosing, busyIds, runnerState, runnerCwd, openElsewhere, otherStates, onRunnerChange, sessionStatuses } from './lib/runner.js';
-import { review, reviewState, answerReview, onReviewChange, checkHookToken, hookToken, syncSessionStatuses, decisionsFor } from './lib/review.js';
+import { setReviewer, send, create, answer, interrupt, stopAll, beginClosing, busyIds, runnerState, runnerCwd, openElsewhere, otherStates, onRunnerChange, sessionStatuses } from './lib/runner.js';
+import { review, reviewState, answerReview, onReviewChange, checkHookToken, hookToken, syncSessionStatuses, decisionsFor, reviewStdio, recordStdioAnswer } from './lib/review.js';
 
 const PORT = Number(process.env.PORT) || 4317;
+// ビュワーで動かしている claude の許可の確認にも、hook と同じ AI の判定をかける。自動で許可しない設定なら check は null を返す
+setReviewer({
+  check: (req) => (getSettings().review.autoAllow && req.toolName === 'Bash' ? reviewStdio(req) : null),
+  record: recordStdioAnswer,
+});
 // 会話ログにはコードや認証まわりの出力がそのまま入っているので、ループバック以外では待ち受けない
 const HOST = '127.0.0.1';
 const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');

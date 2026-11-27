@@ -210,10 +210,10 @@ const ACTIVITY_LABELS = {
 function activity(s) {
   const r = runnerStates.get(s.id);
   const o = otherStates.get(s.id);
-  const rv = reviewsFor(s.id);
-  if (r?.pending?.length || rv.some((p) => p.status !== 'analyzing')) return 'ask';
+  const all = [...(r?.pending ?? []), ...reviewsFor(s.id)];
+  if (all.some((p) => p.status !== 'analyzing')) return 'ask';
   // hook が動いている間はターミナルにもダイアログが出て waiting になるので、調べている確認があればそちらを出す
-  if (rv.length) return 'checking';
+  if (all.length) return 'checking';
   if (o?.status === 'waiting') return 'ask';
   if (r?.running || o?.status === 'busy') return 'busy';
   if (s.agentsRunning) return 'bg';
@@ -565,11 +565,13 @@ function watchChanges() {
   });
   es.addEventListener('runner', (e) => {
     const s = JSON.parse(e.data);
-    const before = runnerStates.get(s.id)?.pending?.length ?? 0;
+    // AI が調べている間は通知せず、人に回ったときに通知する
+    const before = new Set((runnerStates.get(s.id)?.pending ?? []).filter((p) => p.status !== 'analyzing').map((p) => p.requestId));
     runnerStates.set(s.id, s);
     refreshMarks(s.id);
-    if (s.pending.length > before && !s.muted) {
-      const p = s.pending[s.pending.length - 1];
+    const fresh = s.pending.filter((p) => p.status !== 'analyzing' && !before.has(p.requestId));
+    if (fresh.length && !s.muted) {
+      const p = fresh[fresh.length - 1];
       const what = p.toolName === 'AskUserQuestion' ? 'Claude から質問が来ています' : `${toolLabel(p.toolName)} の許可を待っています`;
       announce({ kind: '確認待ち', title: titles.get(s.id) ?? 'セッション', body: what, tag: `waiting-${s.id}`, open: () => openAt(s.id) });
     }
@@ -1352,7 +1354,8 @@ function renderRunner() {
   if (!working) disarmStop();
   // プロセスがまだ無いときは、次に起動するときのモード（会話ログから引き継ぐもの）を出す
   const mode = r.mode ?? current?.session.permissionMode ?? 'default';
-  const status = viaTmux ? 'ターミナル（tmux）' : r.pending.length ? '確認待ち' : r.running ? 'Claude が作業中…' : '待機中';
+  const asking = r.pending.some((p) => p.status !== 'analyzing');
+  const status = viaTmux ? 'ターミナル（tmux）' : asking ? '確認待ち' : r.pending.length ? 'AI が確認中' : r.running ? 'Claude が作業中…' : '待機中';
   $('runner-state').textContent = `${status}・${mode}`;
   $('runner-state').title = `権限モード: ${mode}`;
   $('runner-state').classList.toggle('busy', !!r.running);
@@ -1370,7 +1373,7 @@ function renderPending() {
   const list = runner?.pending ?? [];
   const fromHook = state.s ? reviewsFor(state.s) : [];
   // 答えを入力している途中のカードを作り直さないように、確認の組み合わせか状態が変わったときだけ描き直す
-  const key = [...list.map((p) => p.requestId), ...fromHook.map((p) => `${p.id}:${p.status}`)].join(',');
+  const key = [...list.map((p) => `${p.requestId}:${p.status}`), ...fromHook.map((p) => `${p.id}:${p.status}`)].join(',');
   if (box.dataset.key === key) return;
   box.dataset.key = key;
   // 調べ終わるとカードを作り直すので、それまでに打っていた拒否の理由と入力中の位置を引き継ぐ
@@ -1417,10 +1420,21 @@ function requestDetail(p) {
 }
 
 function permissionCard(p) {
-  const reason = h('input', { type: 'text', class: 'deny-reason', placeholder: '拒否の理由（Claude に伝わります・省略可）' });
+  const reason = h('input', { type: 'text', class: 'deny-reason', 'data-review': p.requestId, placeholder: '拒否の理由（Claude に伝わります・省略可）' });
   const d = requestDetail(p);
-  const card = h('div', { class: 'req-card' },
-    h('div', { class: 'req-head' }, h('span', { class: 'req-kind' }, '許可の確認'), h('span', { class: 'name' }, toolLabel(p.toolName))),
+  const llm = p.analysis?.llm;
+  // AI の判定にかけたものは、hook から届いた確認と同じ見た目にする
+  const judged = p.status === 'analyzing' || p.analysis || p.hold;
+  const kind = p.status === 'analyzing' ? '許可の確認・AI が確認中' : judged ? '許可の確認・あなたの答えを待っています' : '許可の確認';
+  const card = h('div', { class: `req-card${judged ? ` review-card ${p.status === 'analyzing' ? 'checking' : p.level || 'caution'}` : ''}` },
+    h('div', { class: 'req-head' }, h('span', { class: 'req-kind' }, kind), h('span', { class: 'name' }, toolLabel(p.toolName))),
+    llm ? h('div', { class: 'req-desc' }, llm.summary) : null,
+    p.status === 'analyzing'
+      ? h('div', { class: 'review-loading', role: 'status' }, h('span', { class: 'review-spinner' }), 'モデルで中身を調べています。人に回すものだけ、ここに理由が出ます。待たずに答えることもできます')
+      : null,
+    reviewFacts(llm),
+    p.hold?.length ? h('ul', { class: 'review-hold' }, p.hold.map((x) => h('li', {}, x))) : null,
+    llm?.concerns ? h('div', { class: 'review-concerns' }, `確かめること: ${llm.concerns}`) : null,
     d.desc ? h('div', { class: 'req-desc' }, d.desc) : null,
     d.blocks.filter(([, text]) => text != null).flatMap(([label, text, cls]) => [
       label ? h('div', { class: 'req-label' }, label) : null,
