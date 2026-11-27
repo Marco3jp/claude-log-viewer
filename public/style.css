@@ -296,7 +296,19 @@ mark.current { background: var(--mark-current); outline: 2px solid var(--mark-cu
 .cwd-now code { background: color-mix(in srgb, var(--bash) 14%, var(--code)); padding: 0 5px; border-radius: 4px; color: var(--text); }
 .composer { border-top: 1px solid var(--border); background: var(--panel); padding: 8px 20px 10px; flex-shrink: 0; }
 .composer-row { display: flex; gap: 8px; align-items: flex-end; }
-.composer-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.composer-main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+/* 入力欄の / と @ の候補。入力欄のすぐ上に重ねる */
+.suggest {
+  position: absolute; left: 0; right: 0; bottom: 100%; z-index: 20; list-style: none; margin: 0; padding: 4px 0;
+  max-height: 280px; overflow: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgb(0 0 0 / 18%);
+}
+.suggest[hidden] { display: none; }
+.suggest li { display: flex; gap: 10px; align-items: baseline; padding: 3px 10px; cursor: pointer; font-size: 12.5px; min-width: 0; }
+.suggest li.on { background: var(--accent-soft); }
+.suggest-name { flex: none; font-family: ui-monospace, Menlo, monospace; }
+.suggest-hint { flex: none; color: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; }
+.suggest-desc { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.suggest li.suggest-note { cursor: default; color: var(--muted); font-size: 11.5px; border-top: 1px solid var(--border); margin-top: 2px; padding-top: 5px; }
 .composer textarea {
   width: 100%; resize: vertical; min-height: 44px; max-height: 40vh; font: inherit; color: inherit;
   background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;

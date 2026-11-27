@@ -1618,6 +1618,90 @@ async function stopRunner() {
   }
 }
 
+// ---------- / と @ の候補 ----------
+// 先頭の / はコマンド、空白の後ろの @ はファイル。カーソルの前にある書きかけの語を見る
+const suggestState = { kind: null, start: 0, items: [], index: 0, seq: 0 };
+
+function suggestTarget(el) {
+  const before = el.value.slice(0, el.selectionStart);
+  if (el.selectionStart !== el.selectionEnd) return null;
+  const slash = before.match(/^\/(\S*)$/);
+  if (slash) return { kind: 'slash', start: 0, q: slash[1] };
+  const at = before.match(/(^|\s)@(\S*)$/);
+  if (at) return { kind: 'at', start: before.length - at[2].length - 1, q: at[2] };
+  return null;
+}
+
+function closeSuggest() {
+  suggestState.kind = null;
+  suggestState.seq++;
+  $('suggest').hidden = true;
+}
+
+const updateSuggest = debounce(async () => {
+  const el = $('msg');
+  const t = state.s && document.activeElement === el ? suggestTarget(el) : null;
+  if (!t) return closeSuggest();
+  const seq = ++suggestState.seq;
+  let d;
+  try {
+    d = await (await fetch(`/api/suggest?id=${encodeURIComponent(state.s)}&kind=${t.kind}&q=${encodeURIComponent(t.q)}`)).json();
+  } catch {
+    return;
+  }
+  if (seq !== suggestState.seq) return;
+  if (!d.items?.length) return closeSuggest();
+  Object.assign(suggestState, { kind: t.kind, start: t.start, items: d.items, index: 0, source: d.source });
+  renderSuggest();
+}, 120);
+
+function renderSuggest() {
+  const box = $('suggest');
+  box.hidden = false;
+  const note = suggestState.kind === 'slash' && suggestState.source === 'files'
+    ? h('li', { class: 'suggest-note' }, 'ビュワーから一度送ると、組み込みのコマンドとプラグインのものも出ます')
+    : null;
+  box.replaceChildren(...suggestState.items.map((x, i) => h('li', {
+    class: i === suggestState.index ? 'on' : '',
+    // 入力欄からフォーカスを外さずに選ぶ
+    onmousedown: (e) => { e.preventDefault(); acceptSuggest(i); },
+  },
+  h('span', { class: 'suggest-name' }, `${suggestState.kind === 'slash' ? '/' : '@'}${x.name}`),
+  x.argumentHint ? h('span', { class: 'suggest-hint' }, x.argumentHint) : null,
+  x.description ? h('span', { class: 'suggest-desc' }, x.description) : null)), ...(note ? [note] : []));
+  box.querySelector('li.on')?.scrollIntoView({ block: 'nearest' });
+}
+
+function acceptSuggest(i = suggestState.index) {
+  const x = suggestState.items[i];
+  const el = $('msg');
+  if (!x) return;
+  const word = `${suggestState.kind === 'slash' ? '/' : '@'}${x.name}`;
+  // ディレクトリを選んだときは、続けてその中を選べるように空白を足さない
+  const insert = suggestState.kind === 'at' && x.name.endsWith('/') ? word : `${word} `;
+  el.setRangeText(insert, suggestState.start, el.selectionStart, 'end');
+  closeSuggest();
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+// 候補が出ている間の上下・Enter・Tab・Esc は、文書全体のキー操作（送信など）より先に受ける
+function onSuggestKey(e) {
+  if ($('suggest').hidden || e.isComposing || e.keyCode === 229 || e.metaKey || e.ctrlKey || e.altKey) return;
+  const n = suggestState.items.length;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    suggestState.index = (suggestState.index + (e.key === 'ArrowDown' ? 1 : -1) + n) % n;
+    renderSuggest();
+  } else if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
+    acceptSuggest();
+  } else if (e.key === 'Escape') {
+    closeSuggest();
+  } else {
+    return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
+}
+
 // ---------- 新規チャット ----------
 const NEW_PREFS = 'new-session';
 
@@ -2208,6 +2292,10 @@ function bind() {
   $('reload').addEventListener('click', reloadAll);
   $('reload-session').addEventListener('click', reloadAll);
   $('send').addEventListener('click', sendMessage);
+  $('msg').addEventListener('keydown', onSuggestKey);
+  $('msg').addEventListener('input', updateSuggest);
+  $('msg').addEventListener('click', updateSuggest);
+  $('msg').addEventListener('blur', closeSuggest);
   $('memo-text').addEventListener('input', onMemoInput);
   $('memo-to-msg').addEventListener('click', memoToComposer);
   window.addEventListener('pagehide', () => flushMemo({ keepalive: true }));

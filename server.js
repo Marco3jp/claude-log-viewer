@@ -10,6 +10,7 @@ import { hookCommand } from './lib/hook-command.js';
 import { sendViaTmux } from './lib/tmux.js';
 import { setBookmark } from './lib/bookmarks.js';
 import { setTitle, generateTitle, TITLE_MAX } from './lib/titles.js';
+import { suggestCommands, suggestFiles } from './lib/suggest.js';
 import { setHidden, listHidden } from './lib/hidden.js';
 import { getMemo, setMemo, MEMO_MAX } from './lib/memos.js';
 import { send, create, answer, interrupt, stopAll, beginClosing, busyIds, runnerState, runnerCwd, openElsewhere, otherStates, onRunnerChange, sessionStatuses } from './lib/runner.js';
@@ -271,6 +272,15 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/memo') return await handleMemo(req, res, url);
     if (url.pathname === '/api/title' || url.pathname === '/api/title/generate') return await handleTitle(req, res, url);
     if (url.pathname === '/api/cwds') return json(res, 200, recentCwds());
+    // 入力欄の / と @ の候補。@ のファイルは、ビュワーが claude を起動するディレクトリ（セッションを始めたところ）から探す
+    if (url.pathname === '/api/suggest') {
+      const id = url.searchParams.get('id') ?? '';
+      const s = getSession(id);
+      const q = url.searchParams.get('q') ?? '';
+      const cwd = s?.cwd ?? runnerCwd(id);
+      if (url.searchParams.get('kind') === 'at') return json(res, 200, await suggestFiles(cwd, q));
+      return json(res, 200, suggestCommands(cwd, q));
+    }
     if (url.pathname === '/api/settings') return await handleSettings(req, res);
     if (url.pathname === '/api/statusline') {
       const s = getSession(url.searchParams.get('id') ?? '');
