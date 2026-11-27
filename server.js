@@ -2,13 +2,14 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { refresh, takeChanges, search, suggestPaths, sessionDetail, agentEvents, subagents, getSession, recentCwds, isSessionHidden, PROJECTS_DIR } from './lib/index.js';
+import { refresh, takeChanges, search, suggestPaths, sessionDetail, agentEvents, subagents, getSession, recentCwds, isSessionHidden, invalidate, titleSource, PROJECTS_DIR } from './lib/index.js';
 import { renderStatus, clearStatusCache, claudeStatusCommand } from './lib/statusline.js';
 import { getSettings, setStatusLine, setHideRules, setReview } from './lib/settings.js';
 import { CONDITIONS } from './lib/review-conditions.js';
 import { hookCommand } from './lib/hook-command.js';
 import { sendViaTmux } from './lib/tmux.js';
 import { setBookmark } from './lib/bookmarks.js';
+import { setTitle, generateTitle, TITLE_MAX } from './lib/titles.js';
 import { setHidden, listHidden } from './lib/hidden.js';
 import { getMemo, setMemo, MEMO_MAX } from './lib/memos.js';
 import { send, create, answer, interrupt, stopAll, beginClosing, busyIds, runnerState, runnerCwd, openElsewhere, otherStates, onRunnerChange, sessionStatuses } from './lib/runner.js';
@@ -165,6 +166,28 @@ async function handleSettings(req, res) {
   return json(res, 200, settingsBody());
 }
 
+// ビュワーで付けるタイトル。generate ではモデルに付け直させて、そのまま保存する
+async function handleTitle(req, res, url) {
+  if (req.method !== 'POST') return json(res, 405, { error: 'POST only' });
+  if (!(req.headers['content-type'] ?? '').startsWith('application/json')) return json(res, 415, { error: 'application/json only' });
+  const body = await readJson(req);
+  const id = String(body.id ?? '');
+  if (!getSession(id)) return json(res, 404, { error: 'not found' });
+  let title = String(body.title ?? '');
+  if (url.pathname === '/api/title/generate') {
+    const out = await generateTitle(titleSource(id));
+    if (out.error) return json(res, 502, { error: `タイトルを作れませんでした: ${out.error}` });
+    title = out.title;
+  } else if (title.length > TITLE_MAX) {
+    return json(res, 413, { error: `タイトルは ${TITLE_MAX} 文字までです` });
+  }
+  setTitle(id, title);
+  invalidate(id);
+  refresh();
+  const s = getSession(id);
+  return json(res, 200, { id, title: s?.title ?? null, titleBy: s?.titleBy ?? null });
+}
+
 async function handleMemo(req, res, url) {
   if (req.method === 'GET') {
     const m = getMemo(url.searchParams.get('id') ?? '');
@@ -246,6 +269,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/reviews' || url.pathname.startsWith('/api/reviews/')) return await handleReviews(req, res, url);
     if (url.pathname === '/api/runner' || url.pathname.startsWith('/api/runner/')) return await handleRunner(req, res, url);
     if (url.pathname === '/api/memo') return await handleMemo(req, res, url);
+    if (url.pathname === '/api/title' || url.pathname === '/api/title/generate') return await handleTitle(req, res, url);
     if (url.pathname === '/api/cwds') return json(res, 200, recentCwds());
     if (url.pathname === '/api/settings') return await handleSettings(req, res);
     if (url.pathname === '/api/statusline') {

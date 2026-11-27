@@ -173,6 +173,13 @@ mark.current { background: var(--mark-current); outline: 2px solid var(--mark-cu
   height: var(--head-h, auto); max-height: var(--head-h, 40vh);
 }
 .session-head h2 { margin: 0 0 6px; font-size: 17px; display: flex; gap: 4px; align-items: flex-start; }
+.session-head h2 .head-title { min-width: 0; }
+.title-tools { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-left: 6px; font-weight: 400; }
+.title-tools button { font-size: 11px; padding: 1px 7px; color: var(--muted); }
+.title-tools button.send { color: inherit; }
+.session-head h2:not(:hover):not(:focus-within) .title-tools button:not(:disabled) { opacity: .4; }
+.title-input { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; padding: 2px 6px; }
+.title-error { font-size: 12px; color: var(--error); }
 .collapsed-head .session-head, .collapsed-head [data-pane=head] { display: none; }
 .tb-title { display: none; align-items: center; gap: 4px; min-width: 0; flex: 1 1 240px; }
 .collapsed-head .tb-title { display: flex; }

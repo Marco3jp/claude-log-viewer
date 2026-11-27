@@ -978,13 +978,70 @@ function renderHead(d) {
     rows.push(['ファイル', h('details', { class: 'files' }, h('summary', {}, `書いた ${d.files.write.length}・読んだ ${d.files.read.length}`), ul)]);
   }
   const title = s.title || s.firstPrompt?.slice(0, 80) || s.id;
+  const titleEl = h('span', { class: 'head-title', title: TITLE_BY_LABELS[s.titleBy] ?? '' }, title);
   $('session-head').replaceChildren(
-    h('h2', {}, h('button', { class: 'bm-btn', id: 'head-bm' }), h('span', {}, title)),
+    h('h2', {}, h('button', { class: 'bm-btn', id: 'head-bm' }), titleEl, titleTools(s, titleEl)),
     h('dl', { class: 'head-grid' }, rows.flatMap(([k, ...v]) => [h('dt', {}, k), h('dd', {}, ...v)])),
   );
   $('tb-title-text').textContent = title;
   $('tb-title-text').title = title;
   renderBookmarkButtons();
+}
+
+// ---------- タイトルの書き換え ----------
+const TITLE_BY_LABELS = { viewer: 'ビュワーで付けたタイトル', custom: '/rename などで付けたタイトル', ai: 'Claude Code が付けたタイトル' };
+
+async function saveTitle(id, url, body, tools) {
+  for (const b of tools.querySelectorAll('button')) b.disabled = true;
+  tools.querySelector('.title-error')?.remove();
+  try {
+    const d = await postJson(url, { id, ...body });
+    if (current?.session.id === id) {
+      current.session.title = d.title;
+      current.session.titleBy = d.titleBy;
+      renderHead(current);
+    }
+    titles.set(id, d.title || current?.session.firstPrompt || 'セッション');
+    loadList();
+  } catch (e) {
+    if (current?.session.id !== id) return;
+    renderHead(current);
+    document.querySelector('#session-head .title-tools')?.append(h('span', { class: 'title-error' }, e.message));
+  }
+}
+
+function editTitle(s, titleEl, tools) {
+  const input = h('input', { type: 'text', class: 'title-input', value: s.title ?? '', placeholder: '空にすると Claude Code のタイトルに戻します', maxlength: 200 });
+  const done = () => renderHead(current);
+  const save = () => saveTitle(s.id, '/api/title', { title: input.value }, tools);
+  // 文書全体のキー操作（Esc で送信を取り消すなど）に渡さない
+  input.addEventListener('keydown', (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === 'Enter') { e.preventDefault(); save(); }
+    if (e.key === 'Escape') { e.preventDefault(); done(); }
+    e.stopPropagation();
+  });
+  titleEl.replaceWith(input);
+  tools.replaceChildren(
+    h('button', { class: 'send', onclick: save }, '保存'),
+    h('button', { onclick: done }, '取り消す'));
+  input.focus();
+  input.select();
+}
+
+function titleTools(s, titleEl) {
+  const tools = h('span', { class: 'title-tools' });
+  tools.append(
+    h('button', { title: 'タイトルを書き換える。ビュワーの中だけで使い、Claude Code の会話ログには書きません', onclick: () => editTitle(s, titleEl, tools) }, '書き換える'),
+    h('button', {
+      title: '会話の中身からモデル（haiku）にタイトルを付け直させます',
+      onclick: (e) => {
+        e.currentTarget.textContent = '付け直しています…';
+        saveTitle(s.id, '/api/title/generate', {}, tools);
+      },
+    }, 'AI で付け直す'),
+    s.titleBy === 'viewer' ? h('button', { title: 'ビュワーで付けたタイトルを消して、Claude Code のタイトルに戻します', onclick: () => saveTitle(s.id, '/api/title', { title: '' }, tools) }, '元に戻す') : null);
+  return tools;
 }
 
 function renderBookmarkButtons() {
