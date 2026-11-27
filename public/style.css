@@ -132,6 +132,8 @@ body.resizing.y, body.resizing.y * { cursor: row-resize !important; }
 .s-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .badge { font-size: 11px; border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; color: var(--muted); white-space: nowrap; }
 .badge.ref { color: var(--tool); border-color: currentColor; }
+.badge.ref.created { background: color-mix(in srgb, var(--tool) 14%, var(--panel)); font-weight: 600; }
+.badge.ref.prompt { font-weight: 600; }
 .badge.repo { color: var(--text); }
 .s-snippet { font-size: 12px; margin-top: 5px; background: var(--code); border-radius: 4px; padding: 4px 6px; word-break: break-all; }
 .bm-btn { border: 0; background: none; padding: 0 2px; font-size: 15px; line-height: 1.3; color: var(--muted); }
@@ -171,6 +173,13 @@ mark.current { background: var(--mark-current); outline: 2px solid var(--mark-cu
   height: var(--head-h, auto); max-height: var(--head-h, 40vh);
 }
 .session-head h2 { margin: 0 0 6px; font-size: 17px; display: flex; gap: 4px; align-items: flex-start; }
+.session-head h2 .head-title { min-width: 0; }
+.title-tools { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-left: 6px; font-weight: 400; }
+.title-tools button { font-size: 11px; padding: 1px 7px; color: var(--muted); }
+.title-tools button.send { color: inherit; }
+.session-head h2:not(:hover):not(:focus-within) .title-tools button:not(:disabled) { opacity: .4; }
+.title-input { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; padding: 2px 6px; }
+.title-error { font-size: 12px; color: var(--error); }
 .collapsed-head .session-head, .collapsed-head [data-pane=head] { display: none; }
 .tb-title { display: none; align-items: center; gap: 4px; min-width: 0; flex: 1 1 240px; }
 .collapsed-head .tb-title { display: flex; }
@@ -181,6 +190,8 @@ mark.current { background: var(--mark-current); outline: 2px solid var(--mark-cu
 .head-grid dt { color: var(--muted); }
 .head-grid dd { margin: 0; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; min-width: 0; word-break: break-all; }
 .head-grid code { background: var(--code); padding: 1px 5px; border-radius: 4px; }
+.cwd-now-label { color: var(--muted); }
+.head-grid code.cwd-now-path { background: color-mix(in srgb, var(--bash) 14%, var(--code)); }
 .files { font-size: 12px; }
 .files summary { cursor: pointer; color: var(--muted); }
 .files ul { margin: 4px 0; padding-left: 18px; max-height: 160px; overflow: auto; }
@@ -277,9 +288,27 @@ mark.current { background: var(--mark-current); outline: 2px solid var(--mark-cu
 .subagent { margin: 8px 0 4px 6px; padding-left: 12px; border-left: 2px dashed var(--agent); }
 
 /* 続きを送る */
+/* Bash の cd で作業ディレクトリが移ったところ */
+.ev-cwd { display: flex; gap: 8px; align-items: baseline; font-size: 12px; color: var(--bash); padding: 2px 10px; border-left: 2px dashed var(--bash); }
+.ev-cwd code { background: var(--code); padding: 0 5px; border-radius: 4px; word-break: break-all; color: var(--text); }
+.ev-cwd .ev-label { margin-left: auto; }
+.cwd-now { font-size: 12px; color: var(--muted); margin-bottom: 4px; word-break: break-all; }
+.cwd-now code { background: color-mix(in srgb, var(--bash) 14%, var(--code)); padding: 0 5px; border-radius: 4px; color: var(--text); }
 .composer { border-top: 1px solid var(--border); background: var(--panel); padding: 8px 20px 10px; flex-shrink: 0; }
 .composer-row { display: flex; gap: 8px; align-items: flex-end; }
-.composer-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.composer-main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+/* 入力欄の / と @ の候補。入力欄のすぐ上に重ねる */
+.suggest {
+  position: absolute; left: 0; right: 0; bottom: 100%; z-index: 20; list-style: none; margin: 0; padding: 4px 0;
+  max-height: 280px; overflow: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgb(0 0 0 / 18%);
+}
+.suggest[hidden] { display: none; }
+.suggest li { display: flex; gap: 10px; align-items: baseline; padding: 3px 10px; cursor: pointer; font-size: 12.5px; min-width: 0; }
+.suggest li.on { background: var(--accent-soft); }
+.suggest-name { flex: none; font-family: ui-monospace, Menlo, monospace; }
+.suggest-hint { flex: none; color: var(--muted); font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; }
+.suggest-desc { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.suggest li.suggest-note { cursor: default; color: var(--muted); font-size: 11.5px; border-top: 1px solid var(--border); margin-top: 2px; padding-top: 5px; }
 .composer textarea {
   width: 100%; resize: vertical; min-height: 44px; max-height: 40vh; font: inherit; color: inherit;
   background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
@@ -341,15 +370,18 @@ button:disabled { opacity: .5; cursor: default; }
   .a-fg12 { color: #a8c4ff; } .a-fg13 { color: #e0b6ec; } .a-fg14 { color: #8fe3ee; } .a-fg15 { color: #ecebe7; }
 }
 
-/* 状態の印。色は tmux のタブの色（作業中・確認待ち・返事あり・バックグラウンド待ち）に合わせる */
-:root { --st-busy: #ffc66d; --st-ask: #ff6b68; --st-unread: #589df6; --st-bg: #6a8759; }
+/* 状態の印。色は tmux のタブの色（作業中・確認待ち・返事あり・バックグラウンド待ち）に合わせる。AI が確認中はビュワーだけの印 */
+:root { --st-busy: #ffc66d; --st-ask: #ff6b68; --st-checking: #9876aa; --st-unread: #589df6; --st-bg: #6a8759; }
 .status-mark { display: none; flex-shrink: 0; width: 8px; height: 8px; margin-top: .45em; border-radius: 50%; }
-.session-list li:is(.st-busy, .st-ask, .st-bg, .st-unread) .status-mark { display: inline-block; }
+.session-list li:is(.st-busy, .st-ask, .st-checking, .st-bg, .st-unread) .status-mark { display: inline-block; }
 .session-list li.st-busy .status-mark { background: var(--st-busy); animation: agent-pulse 1.4s ease-in-out infinite; }
 .session-list li.st-ask .status-mark { background: var(--st-ask); }
+.session-list li.st-checking .status-mark { background: var(--st-checking); animation: agent-pulse 1.4s ease-in-out infinite; }
 .session-list li.st-bg .status-mark { background: var(--st-bg); }
 .session-list li.st-unread .status-mark { background: var(--st-unread); }
 .session-list li.unread .s-title { font-weight: 700; }
+/* ブックマークしたものは上に固めて並ぶので、ほかのセッションとの境目に線を引く */
+.session-list li.pinned + li:not(.pinned) { border-top: 2px solid var(--border); }
 
 /* 一覧から隠す。ボタンの左はタイトルを行の背景色へぼかして、文字の途中で切れて見えないようにする */
 .session-list li { --row-bg: var(--panel); }
@@ -480,6 +512,7 @@ kbd {
 
 .hide-thinking .ev-thinking,
 .hide-bash .ev-bash,
+.hide-bash .ev-cwd,
 .hide-tool .ev-tool,
 .hide-mcp .ev-mcp,
 .hide-agent .ev-agent,
@@ -503,6 +536,10 @@ kbd {
 .review-card.danger .req-kind { color: var(--error); }
 .review-card.caution { border-left-color: #c99a10; background: color-mix(in srgb, #e3b341 8%, var(--panel-2)); }
 .review-card.caution .req-kind { color: #a8780a; }
+.review-card.checking { border-left-color: var(--st-checking); border-left-style: dashed; background: color-mix(in srgb, var(--st-checking) 8%, var(--panel-2)); }
+.review-card.checking .req-kind { color: #7a5c9a; }
+.review-card.checking .review-loading { border-color: var(--st-checking); }
+.review-card.checking .review-spinner { border-color: var(--st-checking); border-right-color: transparent; }
 .review-time { margin-left: auto; font-size: 11px; color: var(--muted); }
 .review-source { font-size: 12px; color: var(--muted); margin-bottom: 4px; word-break: break-all; }
 .review-facts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0; font-size: 12px; }
@@ -526,6 +563,7 @@ kbd {
 @media (prefers-color-scheme: dark) {
   .review-tag.ok, .review-by-intelligence-auto-approve .review-by, .review-by-allow .review-by { color: #8fc27a; border-color: #6a8759; }
   .review-card.caution .req-kind, .review-card.caution .review-hold { color: #e8c15a; }
+  .review-card.checking .req-kind { color: #c3a6dc; }
 }
 .review-hook { background: var(--code); padding: 6px 8px; border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-all; margin: 0 0 12px; }
 fieldset.review-conditions { border: 1px solid var(--border); border-radius: 6px; margin: 0 0 8px; padding: 6px 10px 0; }
@@ -534,7 +572,10 @@ fieldset.review-conditions .settings-check { margin-bottom: 6px; font-size: 12.5
 .review-loading { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); margin: 4px 0 6px; padding: 6px 8px; border: 1px dashed #c99a10; border-radius: 6px; }
 .review-spinner { flex: none; width: 12px; height: 12px; border: 2px solid #c99a10; border-right-color: transparent; border-radius: 50%; animation: review-spin 0.8s linear infinite; }
 @keyframes review-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .review-spinner { animation: none; border-right-color: #c99a10; opacity: 0.6; } }
+@media (prefers-reduced-motion: reduce) {
+  .review-spinner { animation: none; border-right-color: #c99a10; opacity: 0.6; }
+  .review-card.checking .review-spinner { border-right-color: var(--st-checking); }
+}
 /* チャットの画面で、承認を経たツール呼び出しに付ける印 */
 .decision-badge { flex: none; font-size: 11px; padding: 0 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
 .decision-badge.by-intelligence-auto-approve { border-color: #6a8759; background: color-mix(in srgb, #6a8759 16%, var(--panel)); color: #3f6b2f; font-weight: 600; }

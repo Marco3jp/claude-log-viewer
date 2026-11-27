@@ -201,15 +201,20 @@ function selectSession(id) {
   openSession(id);
 }
 
-// tmux のタブの色と同じ並びで、確認待ち・作業中・バックグラウンド待ち・未読のどれか 1 つを出す
+// tmux のタブの色と同じ並びで、確認待ち・AI が確認中・作業中・バックグラウンド待ち・未読のどれか 1 つを出す
 const ACTIVITY_LABELS = {
-  ask: '確認待ち', busy: '作業中', bg: 'バックグラウンドのサブエージェントを待っています', unread: '新しい返事があります',
+  ask: '確認待ち', checking: 'AI が許可の確認の中身を調べています。終わって人に回すと確認待ちになります',
+  busy: '作業中', bg: 'バックグラウンドのサブエージェントを待っています', unread: '新しい返事があります',
 };
 
 function activity(s) {
   const r = runnerStates.get(s.id);
   const o = otherStates.get(s.id);
-  if (r?.pending?.length || o?.status === 'waiting' || reviewsFor(s.id).length) return 'ask';
+  const rv = reviewsFor(s.id);
+  if (r?.pending?.length || rv.some((p) => p.status !== 'analyzing')) return 'ask';
+  // hook が動いている間はターミナルにもダイアログが出て waiting になるので、調べている確認があればそちらを出す
+  if (rv.length) return 'checking';
+  if (o?.status === 'waiting') return 'ask';
   if (r?.running || o?.status === 'busy') return 'busy';
   if (s.agentsRunning) return 'bg';
   return isUnread(s) ? 'unread' : '';
@@ -223,7 +228,7 @@ function activityTitle(s, a) {
 // 印は一覧を描き直さずに付け外しできるように、クラスで出す
 function itemClass(s) {
   const a = activity(s);
-  return [s.id === state.s ? 'active' : '', a ? `st-${a}` : '', isUnread(s) ? 'unread' : '', s.hidden ? 'is-hidden' : ''].join(' ');
+  return [s.id === state.s ? 'active' : '', a ? `st-${a}` : '', isUnread(s) ? 'unread' : '', s.hidden ? 'is-hidden' : '', s.bookmarked ? 'pinned' : ''].join(' ');
 }
 
 function itemMarks(s) {
@@ -356,12 +361,15 @@ function renderCard(s, terms) {
   h('div', { class: 's-badges' },
     s.repos.map((r) => h('span', { class: 'badge repo' }, r.replace(/^local:/, ''))),
     s.branches.slice(0, 2).map((b) => h('span', { class: 'badge' }, b)),
-    s.refs.slice(0, 6).map((r) => h('span', { class: 'badge ref' }, `${r.kind === 'pr' ? 'PR' : 'Issue'} ${r.ref.split('/')[1]}`)),
+    s.refs.slice(0, 6).map((r) => h('span', { class: `badge ref${r.role ? ` ${r.role}` : ''}`, title: REF_ROLE_LABELS[r.role] ?? r.ref },
+      `${r.role === 'created' ? '出した ' : r.role === 'prompt' ? '依頼元 ' : ''}${r.kind === 'pr' ? 'PR' : 'Issue'} ${r.ref.split('/')[1]}`)),
     s.refs.length > 6 ? h('span', { class: 'badge' }, `+${s.refs.length - 6}`) : null),
   s.snippet ? h('div', { class: 's-snippet', html: highlightHtml(s.snippet, terms) }) : null);
   li.dataset.id = s.id;
   return li;
 }
+
+const REF_ROLE_LABELS = { created: 'このセッションで出したもの', prompt: '最初のプロンプトにあったもの' };
 
 function chipLabel(key, value) {
   if (key === 'project') return projectLabels[value] ?? value;
@@ -460,6 +468,7 @@ async function openSession(id, { reload = false, focusUuid = null, focusTool = n
   const openAgents = new Set([...box.querySelectorAll('.subagent.loaded')].map((b) => b.dataset.agentId));
   current = data;
   renderHead(data);
+  renderCwdNow();
   renderEvents(box, data.events, data.session.cwd);
   if (!decisions.has(id)) loadDecisions(id);
   settleOutgoing(id, data.events);
@@ -497,7 +506,7 @@ function eventEl(uuid) {
 }
 
 function firstAfter(ts) {
-  const x = ($('events')._items ?? []).find((it) => it.ev.ts > ts && !['meta', 'system'].includes(it.ev.kind) && it.el.offsetParent !== null);
+  const x = ($('events')._items ?? []).find((it) => it.ev.ts > ts && !['meta', 'system', 'cwd'].includes(it.ev.kind) && it.el.offsetParent !== null);
   return x?.el ?? null;
 }
 
@@ -778,9 +787,9 @@ function reviewsFor(id) {
   return reviews.pending.filter((p) => p.sessionId === id);
 }
 
-// 色の段階はサーバーが決める。調べている間は分かっていることが少ないので黄色にする
+// 色の段階はサーバーが決める。調べている間は、人の答えを待つものと見分けられるように一覧の印と同じ色にする
 function reviewLevel(p) {
-  return p.status === 'waiting' ? p.level : 'caution';
+  return p.status === 'waiting' ? p.level : 'checking';
 }
 
 function reviewSource(p) {
@@ -817,13 +826,13 @@ function reviewCard(p) {
   const llm = a?.llm;
   const card = h('div', { class: `req-card review-card ${reviewLevel(p)}` },
     h('div', { class: 'req-head' },
-      h('span', { class: 'req-kind' }, p.status === 'analyzing' ? '許可の確認・調べています…' : '許可の確認'),
+      h('span', { class: 'req-kind' }, p.status === 'analyzing' ? '許可の確認・AI が確認中' : '許可の確認・あなたの答えを待っています'),
       h('span', { class: 'name' }, toolLabel(p.toolName)),
       h('span', { class: 'review-time' }, fmtTime(p.at, false))),
     reviewSource(p),
     llm ? h('div', { class: 'req-desc' }, llm.summary) : null,
     p.status === 'analyzing'
-      ? h('div', { class: 'review-loading', role: 'status' }, h('span', { class: 'review-spinner' }), 'モデルで中身を調べています。終わると要約・接続先・自動で許可しなかった理由がここに出ます')
+      ? h('div', { class: 'review-loading', role: 'status' }, h('span', { class: 'review-spinner' }), 'モデルで中身を調べています。自動で許可できなければ、要約・接続先・自動で許可しなかった理由がここに出ます。待たずに答えることもできます')
       : null,
     reviewFacts(llm),
     p.hold?.length ? h('ul', { class: 'review-hold' }, p.hold.map((x) => h('li', {}, x))) : null,
@@ -944,17 +953,23 @@ function renderHead(d) {
   const rows = [
     ['再開', h('code', {}, `claude --resume ${s.id}`), btn],
     ['期間', `${fmtRange(s.start, s.end)}　プロンプト ${s.prompts}・応答 ${s.turns}`],
-    ['場所', h('code', {}, s.cwd ?? '')],
+    ['場所', h('code', {}, s.cwd ?? ''),
+      s.lastCwd && s.lastCwd !== s.cwd ? [h('span', { class: 'cwd-now-label' }, '今は'), h('code', { class: 'cwd-now-path' }, cwdLabel(s.lastCwd, s.cwd))] : null],
   ];
   if (s.repos.length || s.branches.length) {
     rows.push(['リポジトリ',
       s.repos.map((r) => h('a', { href: '#', onclick: (e) => { e.preventDefault(); addFilter('repo', r); } }, r.replace(/^local:/, ''))),
       s.branches.map((b) => h('span', { class: 'badge' }, b))]);
   }
-  if (s.refs.length) {
-    rows.push(['Issue・PR', s.refs.map((r) => h('a', { href: refUrl(r.ref, r.kind), target: '_blank', rel: 'noreferrer' },
-      `${r.kind === 'pr' ? 'PR' : 'Issue'} ${r.ref}`))]);
-  }
+  // このセッションで出したものと、最初のプロンプトにあった依頼元は、ほかに触れたものと分けて出す
+  const refLinks = (list) => list.map((r) => h('a', { href: refUrl(r.ref, r.kind), target: '_blank', rel: 'noreferrer' },
+    `${r.kind === 'pr' ? 'PR' : 'Issue'} ${r.ref}`));
+  const created = s.refs.filter((r) => r.role === 'created');
+  const prompted = s.refs.filter((r) => r.role === 'prompt');
+  const others = s.refs.filter((r) => !r.role);
+  if (created.length) rows.push(['出した', refLinks(created)]);
+  if (prompted.length) rows.push(['依頼元', refLinks(prompted)]);
+  if (others.length) rows.push([created.length || prompted.length ? 'ほかの Issue・PR' : 'Issue・PR', refLinks(others)]);
   const files = d.files.write.length + d.files.read.length;
   if (files) {
     const ul = h('ul', {},
@@ -963,13 +978,70 @@ function renderHead(d) {
     rows.push(['ファイル', h('details', { class: 'files' }, h('summary', {}, `書いた ${d.files.write.length}・読んだ ${d.files.read.length}`), ul)]);
   }
   const title = s.title || s.firstPrompt?.slice(0, 80) || s.id;
+  const titleEl = h('span', { class: 'head-title', title: TITLE_BY_LABELS[s.titleBy] ?? '' }, title);
   $('session-head').replaceChildren(
-    h('h2', {}, h('button', { class: 'bm-btn', id: 'head-bm' }), h('span', {}, title)),
+    h('h2', {}, h('button', { class: 'bm-btn', id: 'head-bm' }), titleEl, titleTools(s, titleEl)),
     h('dl', { class: 'head-grid' }, rows.flatMap(([k, ...v]) => [h('dt', {}, k), h('dd', {}, ...v)])),
   );
   $('tb-title-text').textContent = title;
   $('tb-title-text').title = title;
   renderBookmarkButtons();
+}
+
+// ---------- タイトルの書き換え ----------
+const TITLE_BY_LABELS = { viewer: 'ビュワーで付けたタイトル', custom: '/rename などで付けたタイトル', ai: 'Claude Code が付けたタイトル' };
+
+async function saveTitle(id, url, body, tools) {
+  for (const b of tools.querySelectorAll('button')) b.disabled = true;
+  tools.querySelector('.title-error')?.remove();
+  try {
+    const d = await postJson(url, { id, ...body });
+    if (current?.session.id === id) {
+      current.session.title = d.title;
+      current.session.titleBy = d.titleBy;
+      renderHead(current);
+    }
+    titles.set(id, d.title || current?.session.firstPrompt || 'セッション');
+    loadList();
+  } catch (e) {
+    if (current?.session.id !== id) return;
+    renderHead(current);
+    document.querySelector('#session-head .title-tools')?.append(h('span', { class: 'title-error' }, e.message));
+  }
+}
+
+function editTitle(s, titleEl, tools) {
+  const input = h('input', { type: 'text', class: 'title-input', value: s.title ?? '', placeholder: '空にすると Claude Code のタイトルに戻します', maxlength: 200 });
+  const done = () => renderHead(current);
+  const save = () => saveTitle(s.id, '/api/title', { title: input.value }, tools);
+  // 文書全体のキー操作（Esc で送信を取り消すなど）に渡さない
+  input.addEventListener('keydown', (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === 'Enter') { e.preventDefault(); save(); }
+    if (e.key === 'Escape') { e.preventDefault(); done(); }
+    e.stopPropagation();
+  });
+  titleEl.replaceWith(input);
+  tools.replaceChildren(
+    h('button', { class: 'send', onclick: save }, '保存'),
+    h('button', { onclick: done }, '取り消す'));
+  input.focus();
+  input.select();
+}
+
+function titleTools(s, titleEl) {
+  const tools = h('span', { class: 'title-tools' });
+  tools.append(
+    h('button', { title: 'タイトルを書き換える。ビュワーの中だけで使い、Claude Code の会話ログには書きません', onclick: () => editTitle(s, titleEl, tools) }, '書き換える'),
+    h('button', {
+      title: '会話の中身からモデル（haiku）にタイトルを付け直させます',
+      onclick: (e) => {
+        e.currentTarget.textContent = '付け直しています…';
+        saveTitle(s.id, '/api/title/generate', {}, tools);
+      },
+    }, 'AI で付け直す'),
+    s.titleBy === 'viewer' ? h('button', { title: 'ビュワーで付けたタイトルを消して、Claude Code のタイトルに戻します', onclick: () => saveTitle(s.id, '/api/title', { title: '' }, tools) }, '元に戻す') : null);
+  return tools;
 }
 
 function renderBookmarkButtons() {
@@ -981,6 +1053,21 @@ function renderBookmarkButtons() {
     btn.title = s.bookmarked ? 'ブックマークを外す' : 'ブックマークする';
     btn.onclick = () => toggleBookmark(s.id, !s.bookmarked);
   }
+}
+
+// cd で移った先を、始めたディレクトリからの相対で出す
+function cwdLabel(p, base) {
+  if (base && p === base) return `${p}（始めたディレクトリ）`;
+  return base && p.startsWith(`${base}/`) ? `./${p.slice(base.length + 1)}` : p;
+}
+
+// 送る前に、Claude が最後にいたディレクトリが始めたディレクトリと違うことに気づけるようにする
+function renderCwdNow() {
+  const s = current?.session;
+  const moved = !!(s?.lastCwd && s.cwd && s.lastCwd !== s.cwd);
+  $('cwd-now').hidden = !moved;
+  $('cwd-now').replaceChildren(...(moved ? ['作業ディレクトリ: ', h('code', {}, cwdLabel(s.lastCwd, s.cwd)), `（始めたのは ${s.cwd}）`] : []));
+  $('cwd-now').title = moved ? 'Bash の cd で移っています。ビュワーから続きを送ると、Claude は始めたディレクトリで動き出します' : '';
 }
 
 function shortPath(p, cwd) {
@@ -1087,6 +1174,11 @@ function renderEvent(ev, cwd) {
   const cat = eventCategory(ev);
   const el = h('div', { class: `ev ev-${cat}` });
   if (ev.uuid) el.dataset.uuid = ev.uuid;
+  if (ev.kind === 'cwd') {
+    el.title = `${ev.from} から移りました`;
+    el.append(h('span', { class: 'cwd-label' }, '作業ディレクトリ →'), h('code', {}, cwdLabel(ev.text, cwd)), h('span', { class: 'ev-label' }, fmtTime(ev.ts, false)));
+    return el;
+  }
   if (ev.kind === 'tool') {
     const name = ev.category === 'mcp' ? `${ev.server} / ${ev.name.split('__').slice(2).join('__')}` : ev.name;
     const details = h('details', { class: 'tool' },
@@ -1221,6 +1313,10 @@ async function loadRunner(id) {
   const res = await fetch(`/api/runner?id=${encodeURIComponent(id)}`);
   if (!res.ok || state.s !== id) return;
   runner = await res.json();
+  if (sendErrors.has(id)) {
+    runner.error = sendErrors.get(id);
+    sendErrors.delete(id);
+  }
   renderRunner();
 }
 
@@ -1249,7 +1345,8 @@ function renderRunner() {
   $('runner-note').textContent = viaTmux
     ? 'ターミナルの tmux で開いているセッションです（試験中）。送った文はターミナルの入力欄に貼り付けて送ります。確認や質問にはターミナルで答えてください。止めるも使えません'
     : '';
-  $('send').disabled = !!(outgoing && outgoing.phase !== 'sent') || r.running || r.pending.length > 0 || blocked;
+  const o = outgoings.get(state.s);
+  $('send').disabled = !!(o && o.phase !== 'sent') || r.running || r.pending.length > 0 || blocked;
   const working = !!(r.alive && (r.running || r.pending.length));
   $('stop').disabled = !working;
   if (!working) disarmStop();
@@ -1381,7 +1478,10 @@ const SEND_DELAY_DEFAULT = 2;
 const SEND_DELAY_MAX = 30;
 // 会話ログに書かれないまま反映待ちの表示が残り続けないように、ここで諦める
 const SETTLE_GIVE_UP_MS = 60000;
-let outgoing = null; // { id, text, phase: 'waiting' | 'sending' | 'sent', until, timer, sentAt }
+// 送信待ちの間に別のセッションへ移っても送れるように、セッションごとに持つ
+const outgoings = new Map(); // id → { id, text, phase: 'waiting' | 'sending' | 'sent', until, timer, sentAt }
+// 開いていないセッションへの送信に失敗したときは、そのセッションを開いたときに出す
+const sendErrors = new Map();
 let outgoingTick = null;
 
 function sendDelay() {
@@ -1401,30 +1501,40 @@ function sendMessage() {
   const delay = sendDelay() * 1000;
   $('msg').value = '';
   drafts.delete(id);
-  outgoing = { id, text, phase: 'waiting', until: Date.now() + delay };
-  outgoing.timer = setTimeout(postOutgoing, delay);
+  const o = { id, text, phase: 'waiting', until: Date.now() + delay };
+  o.timer = setTimeout(() => postOutgoing(o), delay);
+  outgoings.set(id, o);
   renderOutgoing();
   renderRunner();
   const box = $('events');
   box.scrollTop = box.scrollHeight;
 }
 
-async function postOutgoing() {
-  const o = outgoing;
-  if (!o || o.phase !== 'waiting') return;
+// tmux で送るかどうかは、送る先のセッションの状態で決める。表示中のセッションの状態で決めると、移った先によって送り方を間違える
+async function runnerFor(id) {
+  if (id === state.s && runner) return runner;
+  const res = await fetch(`/api/runner?id=${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+async function postOutgoing(o) {
+  if (outgoings.get(o.id) !== o || o.phase !== 'waiting') return;
   o.phase = 'sending';
   renderOutgoing();
   try {
-    const viaTmux = o.id === state.s && viaTmuxFor(runner);
+    const viaTmux = viaTmuxFor(await runnerFor(o.id));
     const s = await postJson(viaTmux ? '/api/runner/send-tmux' : '/api/runner/send', { id: o.id, text: o.text });
     o.phase = 'sent';
     o.sentAt = Date.now();
-    setTimeout(() => { if (outgoing === o) { outgoing = null; renderOutgoing(); } }, SETTLE_GIVE_UP_MS);
+    setTimeout(() => { if (outgoings.get(o.id) === o) { outgoings.delete(o.id); renderOutgoing(); } }, SETTLE_GIVE_UP_MS);
     setRunner(s);
   } catch (e) {
-    outgoing = null;
+    if (outgoings.get(o.id) === o) outgoings.delete(o.id);
     restoreText(o);
-    showRunnerError(e.data?.screen ? `${e.message}\n\nターミナルの画面:\n${e.data.screen}` : e.message);
+    const message = e.data?.screen ? `${e.message}\n\nターミナルの画面:\n${e.data.screen}` : e.message;
+    if (o.id === state.s) showRunnerError(message);
+    else sendErrors.set(o.id, `送れませんでした。文面は入力欄に戻しています: ${message}`);
   }
   renderOutgoing();
   renderRunner();
@@ -1440,11 +1550,12 @@ function restoreText(o) {
   }
 }
 
+// 取り消せるのは、表示中のセッションの吹き出しだけ。見えていないものを Esc で取り消さない
 function cancelOutgoing() {
-  if (!outgoing || outgoing.phase !== 'waiting') return false;
-  clearTimeout(outgoing.timer);
-  const o = outgoing;
-  outgoing = null;
+  const o = outgoings.get(state.s);
+  if (!o || o.phase !== 'waiting') return false;
+  clearTimeout(o.timer);
+  outgoings.delete(o.id);
   restoreText(o);
   renderOutgoing();
   renderRunner();
@@ -1454,9 +1565,9 @@ function cancelOutgoing() {
 
 // 会話ログに同じメッセージが書かれたら、仮の表示を本物に任せる
 function settleOutgoing(id, events) {
-  const o = outgoing;
-  if (o?.phase === 'sent' && o.id === id && events.some((e) => e.kind === 'user' && Date.parse(e.ts) >= o.sentAt - 5000 && (e.text ?? '').trim() === o.text)) {
-    outgoing = null;
+  const o = outgoings.get(id);
+  if (o?.phase === 'sent' && events.some((e) => e.kind === 'user' && Date.parse(e.ts) >= o.sentAt - 5000 && (e.text ?? '').trim() === o.text)) {
+    outgoings.delete(id);
   }
   renderOutgoing();
 }
@@ -1464,8 +1575,8 @@ function settleOutgoing(id, events) {
 function renderOutgoing() {
   $('events').querySelector('.ev-outgoing')?.remove();
   clearInterval(outgoingTick);
-  const o = outgoing;
-  if (!o || o.id !== state.s) return;
+  const o = outgoings.get(state.s);
+  if (!o) return;
   const label = h('span', {});
   const cancel = o.phase === 'waiting' ? h('button', { class: 'outgoing-cancel', onclick: cancelOutgoing }, '取り消す') : null;
   const el = h('div', { class: `ev ev-user ev-outgoing ${o.phase}` },
@@ -1505,6 +1616,90 @@ async function stopRunner() {
   } catch (e) {
     showRunnerError(e.message);
   }
+}
+
+// ---------- / と @ の候補 ----------
+// 先頭の / はコマンド、空白の後ろの @ はファイル。カーソルの前にある書きかけの語を見る
+const suggestState = { kind: null, start: 0, items: [], index: 0, seq: 0 };
+
+function suggestTarget(el) {
+  const before = el.value.slice(0, el.selectionStart);
+  if (el.selectionStart !== el.selectionEnd) return null;
+  const slash = before.match(/^\/(\S*)$/);
+  if (slash) return { kind: 'slash', start: 0, q: slash[1] };
+  const at = before.match(/(^|\s)@(\S*)$/);
+  if (at) return { kind: 'at', start: before.length - at[2].length - 1, q: at[2] };
+  return null;
+}
+
+function closeSuggest() {
+  suggestState.kind = null;
+  suggestState.seq++;
+  $('suggest').hidden = true;
+}
+
+const updateSuggest = debounce(async () => {
+  const el = $('msg');
+  const t = state.s && document.activeElement === el ? suggestTarget(el) : null;
+  if (!t) return closeSuggest();
+  const seq = ++suggestState.seq;
+  let d;
+  try {
+    d = await (await fetch(`/api/suggest?id=${encodeURIComponent(state.s)}&kind=${t.kind}&q=${encodeURIComponent(t.q)}`)).json();
+  } catch {
+    return;
+  }
+  if (seq !== suggestState.seq) return;
+  if (!d.items?.length) return closeSuggest();
+  Object.assign(suggestState, { kind: t.kind, start: t.start, items: d.items, index: 0, source: d.source });
+  renderSuggest();
+}, 120);
+
+function renderSuggest() {
+  const box = $('suggest');
+  box.hidden = false;
+  const note = suggestState.kind === 'slash' && suggestState.source === 'files'
+    ? h('li', { class: 'suggest-note' }, 'ビュワーから一度送ると、組み込みのコマンドとプラグインのものも出ます')
+    : null;
+  box.replaceChildren(...suggestState.items.map((x, i) => h('li', {
+    class: i === suggestState.index ? 'on' : '',
+    // 入力欄からフォーカスを外さずに選ぶ
+    onmousedown: (e) => { e.preventDefault(); acceptSuggest(i); },
+  },
+  h('span', { class: 'suggest-name' }, `${suggestState.kind === 'slash' ? '/' : '@'}${x.name}`),
+  x.argumentHint ? h('span', { class: 'suggest-hint' }, x.argumentHint) : null,
+  x.description ? h('span', { class: 'suggest-desc' }, x.description) : null)), ...(note ? [note] : []));
+  box.querySelector('li.on')?.scrollIntoView({ block: 'nearest' });
+}
+
+function acceptSuggest(i = suggestState.index) {
+  const x = suggestState.items[i];
+  const el = $('msg');
+  if (!x) return;
+  const word = `${suggestState.kind === 'slash' ? '/' : '@'}${x.name}`;
+  // ディレクトリを選んだときは、続けてその中を選べるように空白を足さない
+  const insert = suggestState.kind === 'at' && x.name.endsWith('/') ? word : `${word} `;
+  el.setRangeText(insert, suggestState.start, el.selectionStart, 'end');
+  closeSuggest();
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+// 候補が出ている間の上下・Enter・Tab・Esc は、文書全体のキー操作（送信など）より先に受ける
+function onSuggestKey(e) {
+  if ($('suggest').hidden || e.isComposing || e.keyCode === 229 || e.metaKey || e.ctrlKey || e.altKey) return;
+  const n = suggestState.items.length;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    suggestState.index = (suggestState.index + (e.key === 'ArrowDown' ? 1 : -1) + n) % n;
+    renderSuggest();
+  } else if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
+    acceptSuggest();
+  } else if (e.key === 'Escape') {
+    closeSuggest();
+  } else {
+    return;
+  }
+  e.preventDefault();
+  e.stopPropagation();
 }
 
 // ---------- 新規チャット ----------
@@ -1559,6 +1754,7 @@ async function showNewSession(s, cwd) {
   if (state.s) drafts.set(state.s, $('msg').value);
   $('msg').value = '';
   current = null;
+  renderCwdNow();
   state.s = s.id;
   writeHash();
   showView('session');
@@ -2096,6 +2292,10 @@ function bind() {
   $('reload').addEventListener('click', reloadAll);
   $('reload-session').addEventListener('click', reloadAll);
   $('send').addEventListener('click', sendMessage);
+  $('msg').addEventListener('keydown', onSuggestKey);
+  $('msg').addEventListener('input', updateSuggest);
+  $('msg').addEventListener('click', updateSuggest);
+  $('msg').addEventListener('blur', closeSuggest);
   $('memo-text').addEventListener('input', onMemoInput);
   $('memo-to-msg').addEventListener('click', memoToComposer);
   window.addEventListener('pagehide', () => flushMemo({ keepalive: true }));
