@@ -210,10 +210,10 @@ const ACTIVITY_LABELS = {
 function activity(s) {
   const r = runnerStates.get(s.id);
   const o = otherStates.get(s.id);
-  const rv = reviewsFor(s.id);
-  if (r?.pending?.length || rv.some((p) => p.status !== 'analyzing')) return 'ask';
+  const all = [...(r?.pending ?? []), ...reviewsFor(s.id)];
+  if (all.some((p) => p.status !== 'analyzing')) return 'ask';
   // hook が動いている間はターミナルにもダイアログが出て waiting になるので、調べている確認があればそちらを出す
-  if (rv.length) return 'checking';
+  if (all.length) return 'checking';
   if (o?.status === 'waiting') return 'ask';
   if (r?.running || o?.status === 'busy') return 'busy';
   if (s.agentsRunning) return 'bg';
@@ -506,7 +506,7 @@ function eventEl(uuid) {
 }
 
 function firstAfter(ts) {
-  const x = ($('events')._items ?? []).find((it) => it.ev.ts > ts && !['meta', 'system', 'cwd'].includes(it.ev.kind) && it.el.offsetParent !== null);
+  const x = ($('events')._items ?? []).find((it) => it.ev.ts > ts && !['meta', 'system', 'cwd', 'rewind'].includes(it.ev.kind) && it.el.offsetParent !== null);
   return x?.el ?? null;
 }
 
@@ -565,11 +565,13 @@ function watchChanges() {
   });
   es.addEventListener('runner', (e) => {
     const s = JSON.parse(e.data);
-    const before = runnerStates.get(s.id)?.pending?.length ?? 0;
+    // AI が調べている間は通知せず、人に回ったときに通知する
+    const before = new Set((runnerStates.get(s.id)?.pending ?? []).filter((p) => p.status !== 'analyzing').map((p) => p.requestId));
     runnerStates.set(s.id, s);
     refreshMarks(s.id);
-    if (s.pending.length > before && !s.muted) {
-      const p = s.pending[s.pending.length - 1];
+    const fresh = s.pending.filter((p) => p.status !== 'analyzing' && !before.has(p.requestId));
+    if (fresh.length && !s.muted) {
+      const p = fresh[fresh.length - 1];
       const what = p.toolName === 'AskUserQuestion' ? 'Claude から質問が来ています' : `${toolLabel(p.toolName)} の許可を待っています`;
       announce({ kind: '確認待ち', title: titles.get(s.id) ?? 'セッション', body: what, tag: `waiting-${s.id}`, open: () => openAt(s.id) });
     }
@@ -972,9 +974,10 @@ function renderHead(d) {
   if (others.length) rows.push([created.length || prompted.length ? 'ほかの Issue・PR' : 'Issue・PR', refLinks(others)]);
   const files = d.files.write.length + d.files.read.length;
   if (files) {
+    const fileItem = (f, cls) => h('li', { class: cls }, h('a', { href: '#', title: 'ビュワーで開く', onclick: (e) => { e.preventDefault(); openFile(f); } }, f));
     const ul = h('ul', {},
-      d.files.write.map((f) => h('li', { class: 'w' }, f)),
-      d.files.read.filter((f) => !d.files.write.includes(f)).map((f) => h('li', { class: 'r' }, f)));
+      d.files.write.map((f) => fileItem(f, 'w')),
+      d.files.read.filter((f) => !d.files.write.includes(f)).map((f) => fileItem(f, 'r')));
     rows.push(['ファイル', h('details', { class: 'files' }, h('summary', {}, `書いた ${d.files.write.length}・読んだ ${d.files.read.length}`), ul)]);
   }
   const title = s.title || s.firstPrompt?.slice(0, 80) || s.id;
@@ -1040,7 +1043,10 @@ function titleTools(s, titleEl) {
         saveTitle(s.id, '/api/title/generate', {}, tools);
       },
     }, 'AI で付け直す'),
-    s.titleBy === 'viewer' ? h('button', { title: 'ビュワーで付けたタイトルを消して、Claude Code のタイトルに戻します', onclick: () => saveTitle(s.id, '/api/title', { title: '' }, tools) }, '元に戻す') : null);
+  );
+  if (s.titleBy === 'viewer') {
+    tools.append(h('button', { title: 'ビュワーで付けたタイトルを消して、Claude Code のタイトルに戻します', onclick: () => saveTitle(s.id, '/api/title', { title: '' }, tools) }, '元に戻す'));
+  }
   return tools;
 }
 
@@ -1120,9 +1126,18 @@ function section(title, text, { cls = '', copyText } = {}) {
   return [head, p];
 }
 
+const FILE_TOOLS = new Set(['Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+
 function toolBody(ev, cwd) {
   const i = ev.input ?? {};
   const body = h('div', { class: 'tool-body' });
+  const filePath = FILE_TOOLS.has(ev.name) ? i.file_path ?? i.notebook_path : null;
+  if (filePath) {
+    // Edit なら書き換えた後の文字列のところを開く
+    const find = ev.name === 'Edit' ? i.new_string : ev.name === 'MultiEdit' ? i.edits?.[0]?.new_string : null;
+    // 消すだけの Edit は書いた文字列が空なので、印を付けずに開く
+    body.append(h('button', { class: 'open-file', onclick: () => openFile(filePath, find || null) }, 'ファイルの今の中身を開く'));
+  }
   const resultTitle = ev.isError ? '結果（エラー）' : '結果';
   const result = () => (ev.result == null ? h('h6', {}, '結果なし') : section(`${resultTitle}${ev.truncated ? '（長いので途中まで）' : ''}`, ev.result, { cls: ev.isError ? 'err' : '' }));
   switch (ev.name) {
@@ -1170,10 +1185,22 @@ function openTool(details) {
   details.open = true;
 }
 
-function renderEvent(ev, cwd) {
+function renderEvent(ev, cwd, nested = false) {
   const cat = eventCategory(ev);
   const el = h('div', { class: `ev ev-${cat}` });
   if (ev.uuid) el.dataset.uuid = ev.uuid;
+  if (ev.kind === 'rewind') {
+    const n = ev.dropped.filter((e) => e.kind === 'user').length;
+    const box = h('div', { class: 'rewind-dropped' });
+    const details = h('details', {}, h('summary', {}, `取り消したやり取りを見る（発言 ${n} 件）`), box);
+    details.addEventListener('toggle', () => {
+      if (details.open && !box.childElementCount) renderEvents(box, ev.dropped, cwd, true);
+    });
+    el.append(h('div', { class: 'ev-label' }, h('span', {}, '巻き戻し'), h('span', {}, fmtTime(ev.ts))),
+      h('div', { class: 'body' }, `「${ev.text.split('\n')[0].slice(0, 80)}」から先を巻き戻しました。Claude にはここより後のやり取りが見えていません`),
+      details);
+    return el;
+  }
   if (ev.kind === 'cwd') {
     el.title = `${ev.from} から移りました`;
     el.append(h('span', { class: 'cwd-label' }, '作業ディレクトリ →'), h('code', {}, cwdLabel(ev.text, cwd)), h('span', { class: 'ev-label' }, fmtTime(ev.ts, false)));
@@ -1205,7 +1232,10 @@ function renderEvent(ev, cwd) {
   const label = {
     user: ev.queued ? 'ユーザー（実行中に送信）' : 'ユーザー', assistant: 'Claude', thinking: '思考', system: `システム${ev.subtype ? `: ${ev.subtype}` : ''}`, meta: ev.compact ? '要約（compact）' : 'メタ',
   }[ev.kind] ?? ev.kind;
-  el.append(h('div', { class: 'ev-label' }, h('span', {}, label), h('span', {}, fmtTime(ev.ts))));
+  // 巻き戻せるのは本体の会話の、ユーザーが送った発言だけ
+  const canRewind = !nested && ev.kind === 'user' && !ev.queued && ev.uuid;
+  el.append(h('div', { class: 'ev-label' }, h('span', {}, label), h('span', {}, fmtTime(ev.ts)),
+    canRewind ? h('button', { class: 'rewind-btn', title: 'この発言より前に会話を戻し、この発言を入力欄に戻します', onclick: () => openRewind(ev) }, 'ここから巻き戻す') : null));
   const body = h('div', { class: 'body' });
   if (ev.kind === 'assistant') body.innerHTML = renderMarkdown(ev.text);
   else body.textContent = ev.text ?? '';
@@ -1217,7 +1247,7 @@ function renderEvents(container, events, cwd, nested = false) {
   const frag = document.createDocumentFragment();
   const items = [];
   for (const ev of events) {
-    const el = renderEvent(ev, cwd);
+    const el = renderEvent(ev, cwd, nested);
     items.push({ ev, el, text: searchableText(ev) });
     frag.append(el);
   }
@@ -1349,10 +1379,12 @@ function renderRunner() {
   $('send').disabled = !!(o && o.phase !== 'sent') || r.running || r.pending.length > 0 || blocked;
   const working = !!(r.alive && (r.running || r.pending.length));
   $('stop').disabled = !working;
+  $('wake').hidden = !!r.alive || viaTmux || blocked || !state.s;
   if (!working) disarmStop();
   // プロセスがまだ無いときは、次に起動するときのモード（会話ログから引き継ぐもの）を出す
   const mode = r.mode ?? current?.session.permissionMode ?? 'default';
-  const status = viaTmux ? 'ターミナル（tmux）' : r.pending.length ? '確認待ち' : r.running ? 'Claude が作業中…' : '待機中';
+  const asking = r.pending.some((p) => p.status !== 'analyzing');
+  const status = viaTmux ? 'ターミナル（tmux）' : asking ? '確認待ち' : r.pending.length ? 'AI が確認中' : r.running ? 'Claude が作業中…' : r.alive ? '待機中' : '停止中';
   $('runner-state').textContent = `${status}・${mode}`;
   $('runner-state').title = `権限モード: ${mode}`;
   $('runner-state').classList.toggle('busy', !!r.running);
@@ -1370,7 +1402,7 @@ function renderPending() {
   const list = runner?.pending ?? [];
   const fromHook = state.s ? reviewsFor(state.s) : [];
   // 答えを入力している途中のカードを作り直さないように、確認の組み合わせか状態が変わったときだけ描き直す
-  const key = [...list.map((p) => p.requestId), ...fromHook.map((p) => `${p.id}:${p.status}`)].join(',');
+  const key = [...list.map((p) => `${p.requestId}:${p.status}`), ...fromHook.map((p) => `${p.id}:${p.status}`)].join(',');
   if (box.dataset.key === key) return;
   box.dataset.key = key;
   // 調べ終わるとカードを作り直すので、それまでに打っていた拒否の理由と入力中の位置を引き継ぐ
@@ -1417,10 +1449,21 @@ function requestDetail(p) {
 }
 
 function permissionCard(p) {
-  const reason = h('input', { type: 'text', class: 'deny-reason', placeholder: '拒否の理由（Claude に伝わります・省略可）' });
+  const reason = h('input', { type: 'text', class: 'deny-reason', 'data-review': p.requestId, placeholder: '拒否の理由（Claude に伝わります・省略可）' });
   const d = requestDetail(p);
-  const card = h('div', { class: 'req-card' },
-    h('div', { class: 'req-head' }, h('span', { class: 'req-kind' }, '許可の確認'), h('span', { class: 'name' }, toolLabel(p.toolName))),
+  const llm = p.analysis?.llm;
+  // AI の判定にかけたものは、hook から届いた確認と同じ見た目にする
+  const judged = p.status === 'analyzing' || p.analysis || p.hold;
+  const kind = p.status === 'analyzing' ? '許可の確認・AI が確認中' : judged ? '許可の確認・あなたの答えを待っています' : '許可の確認';
+  const card = h('div', { class: `req-card${judged ? ` review-card ${p.status === 'analyzing' ? 'checking' : p.level || 'caution'}` : ''}` },
+    h('div', { class: 'req-head' }, h('span', { class: 'req-kind' }, kind), h('span', { class: 'name' }, toolLabel(p.toolName))),
+    llm ? h('div', { class: 'req-desc' }, llm.summary) : null,
+    p.status === 'analyzing'
+      ? h('div', { class: 'review-loading', role: 'status' }, h('span', { class: 'review-spinner' }), 'モデルで中身を調べています。人に回すものだけ、ここに理由が出ます。待たずに答えることもできます')
+      : null,
+    reviewFacts(llm),
+    p.hold?.length ? h('ul', { class: 'review-hold' }, p.hold.map((x) => h('li', {}, x))) : null,
+    llm?.concerns ? h('div', { class: 'review-concerns' }, `確かめること: ${llm.concerns}`) : null,
     d.desc ? h('div', { class: 'req-desc' }, d.desc) : null,
     d.blocks.filter(([, text]) => text != null).flatMap(([label, text, cls]) => [
       label ? h('div', { class: 'req-label' }, label) : null,
@@ -1616,6 +1659,117 @@ async function stopRunner() {
   } catch (e) {
     showRunnerError(e.message);
   }
+}
+
+// ---------- ファイルを開く ----------
+// セッションで読み書きしたファイルの今の中身を出す。find があれば、そこまで送って印を付ける
+let fileSeq = 0;
+
+async function openFile(p, find = null) {
+  const id = current?.session.id;
+  if (!id) return;
+  const seq = ++fileSeq;
+  $('file-path').textContent = p;
+  $('file-meta').textContent = '読み込み中…';
+  $('file-body').replaceChildren();
+  $('file-copy').onclick = (e) => copy(p, e.currentTarget);
+  if (!$('file-dialog').open) $('file-dialog').showModal();
+  let f;
+  try {
+    const res = await fetch(`/api/file?session=${encodeURIComponent(id)}&path=${encodeURIComponent(p)}`);
+    f = await res.json();
+    if (!res.ok) throw new Error(f.error ?? `HTTP ${res.status}`);
+  } catch (e) {
+    if (seq === fileSeq) $('file-meta').textContent = e.message;
+    return;
+  }
+  if (seq !== fileSeq) return;
+  const lines = f.text == null ? 0 : f.text.split('\n').length;
+  $('file-meta').textContent = [`${f.size.toLocaleString()} バイト`, f.text != null ? `${lines.toLocaleString()} 行` : null, `${fmtTime(f.mtime)} に更新`,
+    f.truncated ? '長いので先頭 1MB だけ出しています' : null].filter(Boolean).join('・');
+  if (f.binary) {
+    $('file-body').replaceChildren(h('div', { class: 'empty-note' }, 'テキストではないファイルなので、中身は出しません'));
+    return;
+  }
+  const at = find ? f.text.indexOf(find) : -1;
+  const code = h('pre', { class: 'file-code' }, ...(at < 0 ? [f.text] : [f.text.slice(0, at), h('mark', {}, find), f.text.slice(at + find.length)]));
+  const gutter = h('pre', { class: 'file-gutter', 'aria-hidden': 'true' }, Array.from({ length: lines }, (_, n) => n + 1).join('\n'));
+  $('file-body').replaceChildren(gutter, code);
+  if (at >= 0) code.querySelector('mark').scrollIntoView({ block: 'center' });
+  else if (find) $('file-meta').textContent += '・Edit で書いた文字列は、今の中身には見つかりません';
+}
+
+// ---------- 巻き戻し ----------
+let rewindTarget = null; // { id, uuid }
+
+async function openRewind(ev) {
+  if (!state.s) return;
+  const target = { id: state.s, uuid: ev.uuid };
+  rewindTarget = target;
+  $('rewind-prompt').textContent = ev.text ?? '';
+  $('rewind-files').replaceChildren('ファイルの記録を調べています…（claude を起動します）');
+  $('rewind-error').hidden = true;
+  $('rewind-conv').disabled = false;
+  $('rewind-all').disabled = true;
+  $('rewind-dialog').showModal();
+  try {
+    const d = await postJson('/api/runner/rewind', { ...target, dryRun: true });
+    if (rewindTarget === target) renderRewindFiles(d.files);
+  } catch (e) {
+    if (rewindTarget !== target) return;
+    $('rewind-files').replaceChildren();
+    showRewindError(e.message);
+  }
+}
+
+function renderRewindFiles(f) {
+  const box = $('rewind-files');
+  if (!f?.canRewind) return box.replaceChildren(`ファイルは戻せません（${f?.error ?? '理由が分かりません'}）。会話だけ戻せます`);
+  const list = f.filesChanged ?? [];
+  if (!list.length) return box.replaceChildren('この発言より後に Claude が変えたファイルはありません');
+  box.replaceChildren(
+    h('div', {}, `「会話とファイルを戻す」では、次の ${list.length} 個のファイルをこの発言の時点に戻します（+${f.insertions ?? 0} -${f.deletions ?? 0} 行）。Claude 以外が変えた分も上書きします`),
+    h('ul', {}, list.map((x) => h('li', {}, shortPath(x, current?.session.cwd)))));
+  $('rewind-all').disabled = false;
+}
+
+function showRewindError(message) {
+  $('rewind-error').hidden = false;
+  $('rewind-error').textContent = message;
+}
+
+async function runRewind(files) {
+  const target = rewindTarget;
+  if (!target) return;
+  for (const id of ['rewind-conv', 'rewind-all']) $(id).disabled = true;
+  try {
+    const d = await postJson('/api/runner/rewind', { ...target, files });
+    $('rewind-dialog').close();
+    rewindTarget = null;
+    // Claude Code と同じく、巻き戻した発言を入力欄に戻す。書きかけがあれば後ろに残す
+    if (state.s === target.id) {
+      const cur = $('msg').value.trim();
+      $('msg').value = cur ? `${d.prefillText}\n${cur}` : d.prefillText;
+      $('msg').focus();
+    } else {
+      drafts.set(target.id, d.prefillText);
+    }
+    if (state.s === target.id) await openSession(target.id, { reload: true });
+  } catch (e) {
+    showRewindError(e.message);
+    $('rewind-conv').disabled = false;
+  }
+}
+
+async function wakeRunner() {
+  if (!state.s || $('wake').disabled) return;
+  $('wake').disabled = true;
+  try {
+    setRunner(await postJson('/api/runner/wake', { id: state.s }));
+  } catch (e) {
+    showRunnerError(e.message);
+  }
+  renderRunner();
 }
 
 // ---------- / と @ の候補 ----------
@@ -2300,6 +2454,11 @@ function bind() {
   $('memo-to-msg').addEventListener('click', memoToComposer);
   window.addEventListener('pagehide', () => flushMemo({ keepalive: true }));
   $('stop').addEventListener('click', stopRunner);
+  $('wake').addEventListener('click', wakeRunner);
+  $('file-close').addEventListener('click', () => $('file-dialog').close());
+  $('rewind-conv').addEventListener('click', () => runRewind(false));
+  $('rewind-all').addEventListener('click', () => runRewind(true));
+  $('rewind-close').addEventListener('click', () => { rewindTarget = null; $('rewind-dialog').close(); });
   setupKeys();
 
   setupPanes();

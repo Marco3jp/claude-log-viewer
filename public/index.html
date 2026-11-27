@@ -120,6 +120,7 @@
             <span class="runner-state" id="runner-state"></span>
             <button id="send" class="send">送信</button>
             <button id="stop" disabled>止める</button>
+            <button id="wake" hidden title="何も送らずに claude を起動します。ほかのエージェントからメッセージを受け取れるようにするときに使います。10 分使わなければ止まります">起こす</button>
           </div>
         </div>
         <div class="runner-note" id="runner-note" hidden></div>
@@ -226,6 +227,31 @@
     <h3>最近の判定</h3>
     <p class="keys-help">サーバーを起動してからの判定が、新しい順に並びます。行にマウスを載せるとコマンドが出ます。</p>
     <ol class="reviews-recent" id="reviews-recent-list"></ol>
+  </div>
+</dialog>
+<dialog class="keys-dialog file-dialog" id="file-dialog">
+  <header class="keys-head">
+    <h2 class="file-path" id="file-path"></h2>
+    <button id="file-copy">パスをコピー</button>
+    <button id="file-close">閉じる</button>
+  </header>
+  <div class="file-meta" id="file-meta"></div>
+  <div class="file-body" id="file-body"></div>
+</dialog>
+<dialog class="keys-dialog rewind-dialog" id="rewind-dialog">
+  <header class="keys-head">
+    <h2>巻き戻す</h2>
+    <button id="rewind-close">閉じる</button>
+  </header>
+  <div class="keys-scroll">
+    <p class="keys-help">Claude Code で Esc を 2 回押したときと同じく、この発言より前に会話を戻し、この発言を入力欄に戻します。会話ログは消えず、ここから先のやり取りは畳んで残ります。</p>
+    <pre class="rewind-prompt" id="rewind-prompt"></pre>
+    <div class="rewind-files" id="rewind-files"></div>
+    <div class="keys-error" id="rewind-error" hidden></div>
+    <div class="keys-actions">
+      <button id="rewind-all" disabled>会話とファイルを戻す</button>
+      <button id="rewind-conv" class="send">会話だけ戻す</button>
+    </div>
   </div>
 </dialog>
 <dialog class="keys-dialog new-dialog" id="new-dialog" data-keymap>
