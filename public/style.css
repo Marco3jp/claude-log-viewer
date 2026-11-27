@@ -350,6 +350,8 @@ button:disabled { opacity: .5; cursor: default; }
 .session-list li.st-bg .status-mark { background: var(--st-bg); }
 .session-list li.st-unread .status-mark { background: var(--st-unread); }
 .session-list li.unread .s-title { font-weight: 700; }
+/* ブックマークしたものは上に固めて並ぶので、ほかのセッションとの境目に線を引く */
+.session-list li.pinned + li:not(.pinned) { border-top: 2px solid var(--border); }
 
 /* 一覧から隠す。ボタンの左はタイトルを行の背景色へぼかして、文字の途中で切れて見えないようにする */
 .session-list li { --row-bg: var(--panel); }

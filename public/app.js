@@ -223,7 +223,7 @@ function activityTitle(s, a) {
 // 印は一覧を描き直さずに付け外しできるように、クラスで出す
 function itemClass(s) {
   const a = activity(s);
-  return [s.id === state.s ? 'active' : '', a ? `st-${a}` : '', isUnread(s) ? 'unread' : '', s.hidden ? 'is-hidden' : ''].join(' ');
+  return [s.id === state.s ? 'active' : '', a ? `st-${a}` : '', isUnread(s) ? 'unread' : '', s.hidden ? 'is-hidden' : '', s.bookmarked ? 'pinned' : ''].join(' ');
 }
 
 function itemMarks(s) {
