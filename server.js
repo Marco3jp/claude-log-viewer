@@ -2,7 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { refresh, takeChanges, search, suggestPaths, sessionDetail, agentEvents, subagents, getSession, recentCwds, isSessionHidden, invalidate, titleSource, lastPromptUuid, PROJECTS_DIR } from './lib/index.js';
+import { refresh, takeChanges, search, suggestPaths, sessionDetail, agentEvents, subagents, getSession, recentCwds, isSessionHidden, invalidate, titleSource, lastPromptUuid, sessionFile, PROJECTS_DIR } from './lib/index.js';
 import { renderStatus, clearStatusCache, claudeStatusCommand } from './lib/statusline.js';
 import { getSettings, setStatusLine, setHideRules, setReview } from './lib/settings.js';
 import { CONDITIONS } from './lib/review-conditions.js';
@@ -334,6 +334,10 @@ const server = http.createServer(async (req, res) => {
       // 会話ログが消えたセッションも、隠した一覧から外せるようにする
       if (on && !getSession(id)) return json(res, 404, { error: 'not found' });
       return json(res, 200, { id, hidden: setHidden(id, on) });
+    }
+    if (url.pathname === '/api/file') {
+      const f = sessionFile(url.searchParams.get('session') ?? '', url.searchParams.get('path'));
+      return f.error ? json(res, f.code ?? 400, { error: f.error }) : json(res, 200, f);
     }
     if (url.pathname === '/api/subagents') {
       const list = subagents(url.searchParams.get('id') ?? '');

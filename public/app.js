@@ -974,9 +974,10 @@ function renderHead(d) {
   if (others.length) rows.push([created.length || prompted.length ? 'ほかの Issue・PR' : 'Issue・PR', refLinks(others)]);
   const files = d.files.write.length + d.files.read.length;
   if (files) {
+    const fileItem = (f, cls) => h('li', { class: cls }, h('a', { href: '#', title: 'ビュワーで開く', onclick: (e) => { e.preventDefault(); openFile(f); } }, f));
     const ul = h('ul', {},
-      d.files.write.map((f) => h('li', { class: 'w' }, f)),
-      d.files.read.filter((f) => !d.files.write.includes(f)).map((f) => h('li', { class: 'r' }, f)));
+      d.files.write.map((f) => fileItem(f, 'w')),
+      d.files.read.filter((f) => !d.files.write.includes(f)).map((f) => fileItem(f, 'r')));
     rows.push(['ファイル', h('details', { class: 'files' }, h('summary', {}, `書いた ${d.files.write.length}・読んだ ${d.files.read.length}`), ul)]);
   }
   const title = s.title || s.firstPrompt?.slice(0, 80) || s.id;
@@ -1122,9 +1123,18 @@ function section(title, text, { cls = '', copyText } = {}) {
   return [head, p];
 }
 
+const FILE_TOOLS = new Set(['Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+
 function toolBody(ev, cwd) {
   const i = ev.input ?? {};
   const body = h('div', { class: 'tool-body' });
+  const filePath = FILE_TOOLS.has(ev.name) ? i.file_path ?? i.notebook_path : null;
+  if (filePath) {
+    // Edit なら書き換えた後の文字列のところを開く
+    const find = ev.name === 'Edit' ? i.new_string : ev.name === 'MultiEdit' ? i.edits?.[0]?.new_string : null;
+    // 消すだけの Edit は書いた文字列が空なので、印を付けずに開く
+    body.append(h('button', { class: 'open-file', onclick: () => openFile(filePath, find || null) }, 'ファイルの今の中身を開く'));
+  }
   const resultTitle = ev.isError ? '結果（エラー）' : '結果';
   const result = () => (ev.result == null ? h('h6', {}, '結果なし') : section(`${resultTitle}${ev.truncated ? '（長いので途中まで）' : ''}`, ev.result, { cls: ev.isError ? 'err' : '' }));
   switch (ev.name) {
@@ -1646,6 +1656,44 @@ async function stopRunner() {
   } catch (e) {
     showRunnerError(e.message);
   }
+}
+
+// ---------- ファイルを開く ----------
+// セッションで読み書きしたファイルの今の中身を出す。find があれば、そこまで送って印を付ける
+let fileSeq = 0;
+
+async function openFile(p, find = null) {
+  const id = current?.session.id;
+  if (!id) return;
+  const seq = ++fileSeq;
+  $('file-path').textContent = p;
+  $('file-meta').textContent = '読み込み中…';
+  $('file-body').replaceChildren();
+  $('file-copy').onclick = (e) => copy(p, e.currentTarget);
+  if (!$('file-dialog').open) $('file-dialog').showModal();
+  let f;
+  try {
+    const res = await fetch(`/api/file?session=${encodeURIComponent(id)}&path=${encodeURIComponent(p)}`);
+    f = await res.json();
+    if (!res.ok) throw new Error(f.error ?? `HTTP ${res.status}`);
+  } catch (e) {
+    if (seq === fileSeq) $('file-meta').textContent = e.message;
+    return;
+  }
+  if (seq !== fileSeq) return;
+  const lines = f.text == null ? 0 : f.text.split('\n').length;
+  $('file-meta').textContent = [`${f.size.toLocaleString()} バイト`, f.text != null ? `${lines.toLocaleString()} 行` : null, `${fmtTime(f.mtime)} に更新`,
+    f.truncated ? '長いので先頭 1MB だけ出しています' : null].filter(Boolean).join('・');
+  if (f.binary) {
+    $('file-body').replaceChildren(h('div', { class: 'empty-note' }, 'テキストではないファイルなので、中身は出しません'));
+    return;
+  }
+  const at = find ? f.text.indexOf(find) : -1;
+  const code = h('pre', { class: 'file-code' }, ...(at < 0 ? [f.text] : [f.text.slice(0, at), h('mark', {}, find), f.text.slice(at + find.length)]));
+  const gutter = h('pre', { class: 'file-gutter', 'aria-hidden': 'true' }, Array.from({ length: lines }, (_, n) => n + 1).join('\n'));
+  $('file-body').replaceChildren(gutter, code);
+  if (at >= 0) code.querySelector('mark').scrollIntoView({ block: 'center' });
+  else if (find) $('file-meta').textContent += '・Edit で書いた文字列は、今の中身には見つかりません';
 }
 
 // ---------- 巻き戻し ----------
@@ -2404,6 +2452,7 @@ function bind() {
   window.addEventListener('pagehide', () => flushMemo({ keepalive: true }));
   $('stop').addEventListener('click', stopRunner);
   $('wake').addEventListener('click', wakeRunner);
+  $('file-close').addEventListener('click', () => $('file-dialog').close());
   $('rewind-conv').addEventListener('click', () => runRewind(false));
   $('rewind-all').addEventListener('click', () => runRewind(true));
   $('rewind-close').addEventListener('click', () => { rewindTarget = null; $('rewind-dialog').close(); });
