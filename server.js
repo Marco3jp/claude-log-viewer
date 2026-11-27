@@ -13,7 +13,7 @@ import { setTitle, generateTitle, TITLE_MAX } from './lib/titles.js';
 import { suggestCommands, suggestFiles } from './lib/suggest.js';
 import { setHidden, listHidden } from './lib/hidden.js';
 import { getMemo, setMemo, MEMO_MAX } from './lib/memos.js';
-import { setReviewer, send, rewind, create, answer, interrupt, stopAll, beginClosing, busyIds, runnerState, runnerCwd, openElsewhere, otherStates, onRunnerChange, sessionStatuses } from './lib/runner.js';
+import { setReviewer, send, rewind, wake, create, answer, interrupt, stopAll, beginClosing, busyIds, runnerState, runnerCwd, openElsewhere, otherStates, onRunnerChange, sessionStatuses } from './lib/runner.js';
 import { review, reviewState, answerReview, onReviewChange, checkHookToken, hookToken, syncSessionStatuses, decisionsFor, reviewStdio, recordStdioAnswer } from './lib/review.js';
 
 const PORT = Number(process.env.PORT) || 4317;
@@ -108,6 +108,8 @@ async function handleRunner(req, res, url) {
     if (!target) return json(res, 400, { error: '巻き戻す発言を選んでください' });
     const r = await rewind(id, cwd, s?.permissionMode, { target, lastSeen: lastPromptUuid(id), files: body.files === true, dryRun: body.dryRun === true });
     return r.error ? json(res, r.code ?? 400, { error: r.error }) : json(res, 200, r);
+  } else if (url.pathname === '/api/runner/wake') {
+    out = wake(id, cwd, s?.permissionMode);
   } else if (url.pathname === '/api/runner/answer') {
     out = answer(id, String(body.requestId ?? ''), body);
   } else if (url.pathname === '/api/runner/interrupt') {

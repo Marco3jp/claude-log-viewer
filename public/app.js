@@ -1366,11 +1366,12 @@ function renderRunner() {
   $('send').disabled = !!(o && o.phase !== 'sent') || r.running || r.pending.length > 0 || blocked;
   const working = !!(r.alive && (r.running || r.pending.length));
   $('stop').disabled = !working;
+  $('wake').hidden = !!r.alive || viaTmux || blocked || !current;
   if (!working) disarmStop();
   // プロセスがまだ無いときは、次に起動するときのモード（会話ログから引き継ぐもの）を出す
   const mode = r.mode ?? current?.session.permissionMode ?? 'default';
   const asking = r.pending.some((p) => p.status !== 'analyzing');
-  const status = viaTmux ? 'ターミナル（tmux）' : asking ? '確認待ち' : r.pending.length ? 'AI が確認中' : r.running ? 'Claude が作業中…' : '待機中';
+  const status = viaTmux ? 'ターミナル（tmux）' : asking ? '確認待ち' : r.pending.length ? 'AI が確認中' : r.running ? 'Claude が作業中…' : r.alive ? '待機中' : '停止中';
   $('runner-state').textContent = `${status}・${mode}`;
   $('runner-state').title = `権限モード: ${mode}`;
   $('runner-state').classList.toggle('busy', !!r.running);
@@ -1707,6 +1708,17 @@ async function runRewind(files) {
     showRewindError(e.message);
     $('rewind-conv').disabled = false;
   }
+}
+
+async function wakeRunner() {
+  if (!state.s || $('wake').disabled) return;
+  $('wake').disabled = true;
+  try {
+    setRunner(await postJson('/api/runner/wake', { id: state.s }));
+  } catch (e) {
+    showRunnerError(e.message);
+  }
+  renderRunner();
 }
 
 // ---------- / と @ の候補 ----------
@@ -2391,6 +2403,7 @@ function bind() {
   $('memo-to-msg').addEventListener('click', memoToComposer);
   window.addEventListener('pagehide', () => flushMemo({ keepalive: true }));
   $('stop').addEventListener('click', stopRunner);
+  $('wake').addEventListener('click', wakeRunner);
   $('rewind-conv').addEventListener('click', () => runRewind(false));
   $('rewind-all').addEventListener('click', () => runRewind(true));
   $('rewind-close').addEventListener('click', () => { rewindTarget = null; $('rewind-dialog').close(); });
