@@ -201,15 +201,20 @@ function selectSession(id) {
   openSession(id);
 }
 
-// tmux のタブの色と同じ並びで、確認待ち・作業中・バックグラウンド待ち・未読のどれか 1 つを出す
+// tmux のタブの色と同じ並びで、確認待ち・AI が確認中・作業中・バックグラウンド待ち・未読のどれか 1 つを出す
 const ACTIVITY_LABELS = {
-  ask: '確認待ち', busy: '作業中', bg: 'バックグラウンドのサブエージェントを待っています', unread: '新しい返事があります',
+  ask: '確認待ち', checking: 'AI が許可の確認の中身を調べています。終わって人に回すと確認待ちになります',
+  busy: '作業中', bg: 'バックグラウンドのサブエージェントを待っています', unread: '新しい返事があります',
 };
 
 function activity(s) {
   const r = runnerStates.get(s.id);
   const o = otherStates.get(s.id);
-  if (r?.pending?.length || o?.status === 'waiting' || reviewsFor(s.id).length) return 'ask';
+  const rv = reviewsFor(s.id);
+  if (r?.pending?.length || rv.some((p) => p.status !== 'analyzing')) return 'ask';
+  // hook が動いている間はターミナルにもダイアログが出て waiting になるので、調べている確認があればそちらを出す
+  if (rv.length) return 'checking';
+  if (o?.status === 'waiting') return 'ask';
   if (r?.running || o?.status === 'busy') return 'busy';
   if (s.agentsRunning) return 'bg';
   return isUnread(s) ? 'unread' : '';
@@ -778,9 +783,9 @@ function reviewsFor(id) {
   return reviews.pending.filter((p) => p.sessionId === id);
 }
 
-// 色の段階はサーバーが決める。調べている間は分かっていることが少ないので黄色にする
+// 色の段階はサーバーが決める。調べている間は、人の答えを待つものと見分けられるように一覧の印と同じ色にする
 function reviewLevel(p) {
-  return p.status === 'waiting' ? p.level : 'caution';
+  return p.status === 'waiting' ? p.level : 'checking';
 }
 
 function reviewSource(p) {
@@ -817,13 +822,13 @@ function reviewCard(p) {
   const llm = a?.llm;
   const card = h('div', { class: `req-card review-card ${reviewLevel(p)}` },
     h('div', { class: 'req-head' },
-      h('span', { class: 'req-kind' }, p.status === 'analyzing' ? '許可の確認・調べています…' : '許可の確認'),
+      h('span', { class: 'req-kind' }, p.status === 'analyzing' ? '許可の確認・AI が確認中' : '許可の確認・あなたの答えを待っています'),
       h('span', { class: 'name' }, toolLabel(p.toolName)),
       h('span', { class: 'review-time' }, fmtTime(p.at, false))),
     reviewSource(p),
     llm ? h('div', { class: 'req-desc' }, llm.summary) : null,
     p.status === 'analyzing'
-      ? h('div', { class: 'review-loading', role: 'status' }, h('span', { class: 'review-spinner' }), 'モデルで中身を調べています。終わると要約・接続先・自動で許可しなかった理由がここに出ます')
+      ? h('div', { class: 'review-loading', role: 'status' }, h('span', { class: 'review-spinner' }), 'モデルで中身を調べています。自動で許可できなければ、要約・接続先・自動で許可しなかった理由がここに出ます。待たずに答えることもできます')
       : null,
     reviewFacts(llm),
     p.hold?.length ? h('ul', { class: 'review-hold' }, p.hold.map((x) => h('li', {}, x))) : null,
