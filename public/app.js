@@ -506,7 +506,7 @@ function eventEl(uuid) {
 }
 
 function firstAfter(ts) {
-  const x = ($('events')._items ?? []).find((it) => it.ev.ts > ts && !['meta', 'system', 'cwd'].includes(it.ev.kind) && it.el.offsetParent !== null);
+  const x = ($('events')._items ?? []).find((it) => it.ev.ts > ts && !['meta', 'system', 'cwd', 'rewind'].includes(it.ev.kind) && it.el.offsetParent !== null);
   return x?.el ?? null;
 }
 
@@ -1172,10 +1172,22 @@ function openTool(details) {
   details.open = true;
 }
 
-function renderEvent(ev, cwd) {
+function renderEvent(ev, cwd, nested = false) {
   const cat = eventCategory(ev);
   const el = h('div', { class: `ev ev-${cat}` });
   if (ev.uuid) el.dataset.uuid = ev.uuid;
+  if (ev.kind === 'rewind') {
+    const n = ev.dropped.filter((e) => e.kind === 'user').length;
+    const box = h('div', { class: 'rewind-dropped' });
+    const details = h('details', {}, h('summary', {}, `取り消したやり取りを見る（発言 ${n} 件）`), box);
+    details.addEventListener('toggle', () => {
+      if (details.open && !box.childElementCount) renderEvents(box, ev.dropped, cwd, true);
+    });
+    el.append(h('div', { class: 'ev-label' }, h('span', {}, '巻き戻し'), h('span', {}, fmtTime(ev.ts))),
+      h('div', { class: 'body' }, `「${ev.text.split('\n')[0].slice(0, 80)}」から先を巻き戻しました。Claude にはここより後のやり取りが見えていません`),
+      details);
+    return el;
+  }
   if (ev.kind === 'cwd') {
     el.title = `${ev.from} から移りました`;
     el.append(h('span', { class: 'cwd-label' }, '作業ディレクトリ →'), h('code', {}, cwdLabel(ev.text, cwd)), h('span', { class: 'ev-label' }, fmtTime(ev.ts, false)));
@@ -1207,7 +1219,10 @@ function renderEvent(ev, cwd) {
   const label = {
     user: ev.queued ? 'ユーザー（実行中に送信）' : 'ユーザー', assistant: 'Claude', thinking: '思考', system: `システム${ev.subtype ? `: ${ev.subtype}` : ''}`, meta: ev.compact ? '要約（compact）' : 'メタ',
   }[ev.kind] ?? ev.kind;
-  el.append(h('div', { class: 'ev-label' }, h('span', {}, label), h('span', {}, fmtTime(ev.ts))));
+  // 巻き戻せるのは本体の会話の、ユーザーが送った発言だけ
+  const canRewind = !nested && ev.kind === 'user' && !ev.queued && ev.uuid;
+  el.append(h('div', { class: 'ev-label' }, h('span', {}, label), h('span', {}, fmtTime(ev.ts)),
+    canRewind ? h('button', { class: 'rewind-btn', title: 'この発言より前に会話を戻し、この発言を入力欄に戻します', onclick: () => openRewind(ev) }, 'ここから巻き戻す') : null));
   const body = h('div', { class: 'body' });
   if (ev.kind === 'assistant') body.innerHTML = renderMarkdown(ev.text);
   else body.textContent = ev.text ?? '';
@@ -1219,7 +1234,7 @@ function renderEvents(container, events, cwd, nested = false) {
   const frag = document.createDocumentFragment();
   const items = [];
   for (const ev of events) {
-    const el = renderEvent(ev, cwd);
+    const el = renderEvent(ev, cwd, nested);
     items.push({ ev, el, text: searchableText(ev) });
     frag.append(el);
   }
@@ -1629,6 +1644,68 @@ async function stopRunner() {
     setRunner(await postJson('/api/runner/interrupt', { id: state.s }));
   } catch (e) {
     showRunnerError(e.message);
+  }
+}
+
+// ---------- 巻き戻し ----------
+let rewindTarget = null; // { id, uuid }
+
+async function openRewind(ev) {
+  if (!state.s) return;
+  const target = { id: state.s, uuid: ev.uuid };
+  rewindTarget = target;
+  $('rewind-prompt').textContent = ev.text ?? '';
+  $('rewind-files').replaceChildren('ファイルの記録を調べています…（claude を起動します）');
+  $('rewind-error').hidden = true;
+  $('rewind-conv').disabled = false;
+  $('rewind-all').disabled = true;
+  $('rewind-dialog').showModal();
+  try {
+    const d = await postJson('/api/runner/rewind', { ...target, dryRun: true });
+    if (rewindTarget === target) renderRewindFiles(d.files);
+  } catch (e) {
+    if (rewindTarget !== target) return;
+    $('rewind-files').replaceChildren();
+    showRewindError(e.message);
+  }
+}
+
+function renderRewindFiles(f) {
+  const box = $('rewind-files');
+  if (!f?.canRewind) return box.replaceChildren(`ファイルは戻せません（${f?.error ?? '理由が分かりません'}）。会話だけ戻せます`);
+  const list = f.filesChanged ?? [];
+  if (!list.length) return box.replaceChildren('この発言より後に Claude が変えたファイルはありません');
+  box.replaceChildren(
+    h('div', {}, `「会話とファイルを戻す」では、次の ${list.length} 個のファイルをこの発言の時点に戻します（+${f.insertions ?? 0} -${f.deletions ?? 0} 行）。Claude 以外が変えた分も上書きします`),
+    h('ul', {}, list.map((x) => h('li', {}, shortPath(x, current?.session.cwd)))));
+  $('rewind-all').disabled = false;
+}
+
+function showRewindError(message) {
+  $('rewind-error').hidden = false;
+  $('rewind-error').textContent = message;
+}
+
+async function runRewind(files) {
+  const target = rewindTarget;
+  if (!target) return;
+  for (const id of ['rewind-conv', 'rewind-all']) $(id).disabled = true;
+  try {
+    const d = await postJson('/api/runner/rewind', { ...target, files });
+    $('rewind-dialog').close();
+    rewindTarget = null;
+    // Claude Code と同じく、巻き戻した発言を入力欄に戻す。書きかけがあれば後ろに残す
+    if (state.s === target.id) {
+      const cur = $('msg').value.trim();
+      $('msg').value = cur ? `${d.prefillText}\n${cur}` : d.prefillText;
+      $('msg').focus();
+    } else {
+      drafts.set(target.id, d.prefillText);
+    }
+    if (state.s === target.id) await openSession(target.id, { reload: true });
+  } catch (e) {
+    showRewindError(e.message);
+    $('rewind-conv').disabled = false;
   }
 }
 
@@ -2314,6 +2391,9 @@ function bind() {
   $('memo-to-msg').addEventListener('click', memoToComposer);
   window.addEventListener('pagehide', () => flushMemo({ keepalive: true }));
   $('stop').addEventListener('click', stopRunner);
+  $('rewind-conv').addEventListener('click', () => runRewind(false));
+  $('rewind-all').addEventListener('click', () => runRewind(true));
+  $('rewind-close').addEventListener('click', () => { rewindTarget = null; $('rewind-dialog').close(); });
   setupKeys();
 
   setupPanes();
