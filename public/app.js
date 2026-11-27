@@ -1221,6 +1221,10 @@ async function loadRunner(id) {
   const res = await fetch(`/api/runner?id=${encodeURIComponent(id)}`);
   if (!res.ok || state.s !== id) return;
   runner = await res.json();
+  if (sendErrors.has(id)) {
+    runner.error = sendErrors.get(id);
+    sendErrors.delete(id);
+  }
   renderRunner();
 }
 
@@ -1249,7 +1253,8 @@ function renderRunner() {
   $('runner-note').textContent = viaTmux
     ? 'ターミナルの tmux で開いているセッションです（試験中）。送った文はターミナルの入力欄に貼り付けて送ります。確認や質問にはターミナルで答えてください。止めるも使えません'
     : '';
-  $('send').disabled = !!(outgoing && outgoing.phase !== 'sent') || r.running || r.pending.length > 0 || blocked;
+  const o = outgoings.get(state.s);
+  $('send').disabled = !!(o && o.phase !== 'sent') || r.running || r.pending.length > 0 || blocked;
   const working = !!(r.alive && (r.running || r.pending.length));
   $('stop').disabled = !working;
   if (!working) disarmStop();
@@ -1381,7 +1386,10 @@ const SEND_DELAY_DEFAULT = 2;
 const SEND_DELAY_MAX = 30;
 // 会話ログに書かれないまま反映待ちの表示が残り続けないように、ここで諦める
 const SETTLE_GIVE_UP_MS = 60000;
-let outgoing = null; // { id, text, phase: 'waiting' | 'sending' | 'sent', until, timer, sentAt }
+// 送信待ちの間に別のセッションへ移っても送れるように、セッションごとに持つ
+const outgoings = new Map(); // id → { id, text, phase: 'waiting' | 'sending' | 'sent', until, timer, sentAt }
+// 開いていないセッションへの送信に失敗したときは、そのセッションを開いたときに出す
+const sendErrors = new Map();
 let outgoingTick = null;
 
 function sendDelay() {
@@ -1401,30 +1409,40 @@ function sendMessage() {
   const delay = sendDelay() * 1000;
   $('msg').value = '';
   drafts.delete(id);
-  outgoing = { id, text, phase: 'waiting', until: Date.now() + delay };
-  outgoing.timer = setTimeout(postOutgoing, delay);
+  const o = { id, text, phase: 'waiting', until: Date.now() + delay };
+  o.timer = setTimeout(() => postOutgoing(o), delay);
+  outgoings.set(id, o);
   renderOutgoing();
   renderRunner();
   const box = $('events');
   box.scrollTop = box.scrollHeight;
 }
 
-async function postOutgoing() {
-  const o = outgoing;
-  if (!o || o.phase !== 'waiting') return;
+// tmux で送るかどうかは、送る先のセッションの状態で決める。表示中のセッションの状態で決めると、移った先によって送り方を間違える
+async function runnerFor(id) {
+  if (id === state.s && runner) return runner;
+  const res = await fetch(`/api/runner?id=${encodeURIComponent(id)}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+async function postOutgoing(o) {
+  if (outgoings.get(o.id) !== o || o.phase !== 'waiting') return;
   o.phase = 'sending';
   renderOutgoing();
   try {
-    const viaTmux = o.id === state.s && viaTmuxFor(runner);
+    const viaTmux = viaTmuxFor(await runnerFor(o.id));
     const s = await postJson(viaTmux ? '/api/runner/send-tmux' : '/api/runner/send', { id: o.id, text: o.text });
     o.phase = 'sent';
     o.sentAt = Date.now();
-    setTimeout(() => { if (outgoing === o) { outgoing = null; renderOutgoing(); } }, SETTLE_GIVE_UP_MS);
+    setTimeout(() => { if (outgoings.get(o.id) === o) { outgoings.delete(o.id); renderOutgoing(); } }, SETTLE_GIVE_UP_MS);
     setRunner(s);
   } catch (e) {
-    outgoing = null;
+    if (outgoings.get(o.id) === o) outgoings.delete(o.id);
     restoreText(o);
-    showRunnerError(e.data?.screen ? `${e.message}\n\nターミナルの画面:\n${e.data.screen}` : e.message);
+    const message = e.data?.screen ? `${e.message}\n\nターミナルの画面:\n${e.data.screen}` : e.message;
+    if (o.id === state.s) showRunnerError(message);
+    else sendErrors.set(o.id, `送れませんでした。文面は入力欄に戻しています: ${message}`);
   }
   renderOutgoing();
   renderRunner();
@@ -1440,11 +1458,12 @@ function restoreText(o) {
   }
 }
 
+// 取り消せるのは、表示中のセッションの吹き出しだけ。見えていないものを Esc で取り消さない
 function cancelOutgoing() {
-  if (!outgoing || outgoing.phase !== 'waiting') return false;
-  clearTimeout(outgoing.timer);
-  const o = outgoing;
-  outgoing = null;
+  const o = outgoings.get(state.s);
+  if (!o || o.phase !== 'waiting') return false;
+  clearTimeout(o.timer);
+  outgoings.delete(o.id);
   restoreText(o);
   renderOutgoing();
   renderRunner();
@@ -1454,9 +1473,9 @@ function cancelOutgoing() {
 
 // 会話ログに同じメッセージが書かれたら、仮の表示を本物に任せる
 function settleOutgoing(id, events) {
-  const o = outgoing;
-  if (o?.phase === 'sent' && o.id === id && events.some((e) => e.kind === 'user' && Date.parse(e.ts) >= o.sentAt - 5000 && (e.text ?? '').trim() === o.text)) {
-    outgoing = null;
+  const o = outgoings.get(id);
+  if (o?.phase === 'sent' && events.some((e) => e.kind === 'user' && Date.parse(e.ts) >= o.sentAt - 5000 && (e.text ?? '').trim() === o.text)) {
+    outgoings.delete(id);
   }
   renderOutgoing();
 }
@@ -1464,8 +1483,8 @@ function settleOutgoing(id, events) {
 function renderOutgoing() {
   $('events').querySelector('.ev-outgoing')?.remove();
   clearInterval(outgoingTick);
-  const o = outgoing;
-  if (!o || o.id !== state.s) return;
+  const o = outgoings.get(state.s);
+  if (!o) return;
   const label = h('span', {});
   const cancel = o.phase === 'waiting' ? h('button', { class: 'outgoing-cancel', onclick: cancelOutgoing }, '取り消す') : null;
   const el = h('div', { class: `ev ev-user ev-outgoing ${o.phase}` },
