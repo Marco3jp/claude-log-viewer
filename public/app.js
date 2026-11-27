@@ -11,7 +11,7 @@ const TOGGLES = [
 ];
 
 const state = {
-  q: '', from: '', to: '', path: '', pathMode: 'any', sort: 'end', bm: '', hidden: '', s: null, view: '',
+  q: '', from: '', to: '', path: '', pathMode: 'any', sort: 'end', bm: '', hidden: '', s: null, a: '', view: '',
   project: [], repo: [], ref: [], branch: [], tool: [], mcp: [],
 };
 let facetsCache = {};
@@ -109,7 +109,7 @@ function readHash() {
 function apiParams() {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(state)) {
-    if (k === 's' || k === 'view') continue;
+    if (k === 's' || k === 'a' || k === 'view') continue;
     if (Array.isArray(v)) v.forEach((x) => p.append(k, x));
     else if (v) p.set(k, v);
   }
@@ -198,7 +198,7 @@ function bookmarkButton(s) {
 
 function selectSession(id) {
   showView('session');
-  openSession(id);
+  openSession(id, { agent: '' });
 }
 
 // tmux のタブの色と同じ並びで、確認待ち・AI が確認中・作業中・バックグラウンド待ち・未読のどれか 1 つを出す
@@ -307,7 +307,11 @@ async function loadAgents(id) {
     if (!res.ok) return null;
     const list = await res.json();
     agentLists.set(id, list);
-    if (id === state.s) renderAgentsBar();
+    if (id === state.s) {
+      renderAgentsBar();
+      // 帯の「動いています」と経過時間を、一覧と同じ間隔で取り直す
+      if (state.a) renderAgentBanner(id, state.a, agentView);
+    }
     return list;
   } catch {
     return null;
@@ -324,23 +328,23 @@ function renderAgentsBar() {
   const bar = $('agents-bar');
   const list = (agentLists.get(state.s) ?? []).filter((a) => a.running);
   bar.hidden = !list.length;
-  bar.replaceChildren(...list.map((a) => h('button', { class: 'agent-chip', title: '押すと、このサブエージェントのやり取りを開きます', onclick: () => openAgent(state.s, a) },
+  bar.replaceChildren(...list.map((a) => h('button', { class: `agent-chip${a.agentId === state.a ? ' active' : ''}`, title: '押すと、このサブエージェントのやり取りを開きます', onclick: () => openAgent(state.s, a) },
     h('div', { class: 'agent-chip-head' }, h('span', { class: 'agent-dot' }), h('span', { class: 'agent-desc' }, a.description ?? a.agentId)),
     h('div', { class: 'agent-meta' }, [a.agentType, a.background ? 'バックグラウンド' : null, `ツール ${a.tools}`, elapsed(a.start)].filter(Boolean).join(' · ')),
     a.lastTool ? h('div', { class: 'agent-last' }, `${toolLabel(a.lastTool.name)}  ${toolSummary(a.lastTool, current?.session.cwd)}`) : null)));
 }
 
+// サブエージェントのやり取りは、親の会話の中に広げずに、独立した会話として開く
 function openAgent(id, a) {
   showView('session');
-  return openSession(id, { focusTool: a.toolUseId });
+  return openSession(id, { agent: a.agentId });
 }
 
-// Agent の呼び出しを開いて、中のやり取りまで出す
+// 親の会話に戻るときに、そのサブエージェントを呼んだところを開く
 function focusAgentTool(toolUseId) {
   const details = [...$('events').querySelectorAll('details.tool')].find((d) => d.dataset.id === toolUseId);
   if (!details) return null;
   openTool(details);
-  details.querySelector('.subagent-open')?.click();
   return details.closest('.ev');
 }
 
@@ -444,60 +448,129 @@ function closeSearchView() {
 }
 
 // ---------- セッション表示 ----------
-async function openSession(id, { reload = false, focusUuid = null, focusTool = null } = {}) {
+// agent を渡すと、そのサブエージェントのやり取りを独立した会話として出す。空文字で親の会話に戻る
+async function openSession(id, { reload = false, focusUuid = null, focusTool = null, agent } = {}) {
   if (!reload && state.s !== id) {
     if (state.s) drafts.set(state.s, $('msg').value);
     $('msg').value = drafts.get(id) ?? '';
     runner = null;
     renderRunner();
+    if (agent === undefined) agent = '';
   }
+  const leaving = agent !== undefined && agent !== state.a;
+  if (agent !== undefined) state.a = agent;
   if (!reload && memo.id !== id) loadMemo(id);
   state.s = id;
   writeHash();
   loadRunner(id);
   loadStatus(id);
   for (const li of document.querySelectorAll('.session-list li')) li.classList.toggle('active', li.dataset.id === id);
-  const res = await fetch(`/api/session?id=${encodeURIComponent(id)}`);
-  if (!res.ok) return;
+  const agentId = state.a;
+  const [res, agentRes] = await Promise.all([
+    fetch(`/api/session?id=${encodeURIComponent(id)}`),
+    agentId ? fetch(`/api/agent?session=${encodeURIComponent(id)}&agent=${encodeURIComponent(agentId)}`) : null,
+  ]);
+  if (!res.ok || state.s !== id || state.a !== agentId) return;
   const data = await res.json();
+  const agentData = agentRes?.ok ? await agentRes.json() : null;
   const box = $('events');
-  const scroll = box.scrollTop;
-  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  // 読み直しても、読んでいたところに留まる。末尾に新しい行が増えたら「新着あり」を出すだけで、末尾には飛ばない
+  const keep = reload && !leaving;
+  const anchor = keep ? captureAnchor(box) : null;
+  const before = keep ? lastEventKey(box) : null;
   const prevMark = markIndex;
   const openIds = new Set([...box.querySelectorAll('details.tool[open]')].map((d) => d.dataset.id));
-  const openAgents = new Set([...box.querySelectorAll('.subagent.loaded')].map((b) => b.dataset.agentId));
   current = data;
   renderHead(data);
   renderCwdNow();
-  renderEvents(box, data.events, data.session.cwd);
+  renderAgentBanner(id, agentId, agentData);
+  renderEvents(box, agentData ? agentData.events : agentId ? [] : data.events, data.session.cwd);
   if (!decisions.has(id)) loadDecisions(id);
   settleOutgoing(id, data.events);
   if (data.session.subagents) loadAgents(id);
   else renderAgentsBar();
-  if (reload) {
+  if (keep) {
     // 開いていたツールの中身を先に描いておかないと、高さが変わって読んでいた位置からずれる
     for (const d of box.querySelectorAll('details.tool')) if (openIds.has(d.dataset.id)) openTool(d);
-    // 開いていたサブエージェントのやり取りも、書き足された分を含めて開き直す
-    for (const b of box.querySelectorAll('.subagent')) if (openAgents.has(b.dataset.agentId)) b.parentNode.querySelector('.subagent-open')?.click();
     runFind(false);
     if (prevMark >= 0 && marks.length) {
       markIndex = Math.min(prevMark, marks.length - 1);
       marks[markIndex].classList.add('current');
       $('find-count').textContent = `${markIndex + 1} / ${marks.length}${$('find-count').textContent.match(/（.*）/)?.[0] ?? ''}`;
     }
-    // 末尾を読んでいたら、書き込み中のセッションの続きを追えるように末尾に付いていく
-    box.scrollTop = atBottom ? box.scrollHeight : scroll;
+    restoreAnchor(box, anchor);
+    if (lastEventKey(box) !== before) showNewBelow();
     markSeen();
     return;
   }
+  hideNewBelow();
   box.scrollTop = 0;
   $('find').value = state.q.replace(/(^|\s)-("[^"]+"|\S+)/g, ' ').trim();
   // 通知から開いたときはその返事、未読があれば前に読んだところの続き、検索語があれば最初の一致。それ以外は末尾で開く
-  const target = focusTool ? focusAgentTool(focusTool) : focusUuid ? eventEl(focusUuid) : isUnread(data.session) ? firstAfter(readAt(id)) : null;
+  const target = agentId ? null : focusTool ? focusAgentTool(focusTool) : focusUuid ? eventEl(focusUuid) : isUnread(data.session) ? firstAfter(readAt(id)) : null;
   runFind(!target);
   if (target) jumpTo(target);
   else if (!marks.length) box.scrollTop = box.scrollHeight;
   markSeen();
+}
+
+// 画面の一番上に見えている行と、そこからのずれ。読み直したあとに同じ行を同じ位置に戻すのに使う
+function captureAnchor(box) {
+  const top = box.getBoundingClientRect().top;
+  const seen = new Map();
+  for (const [index, el] of [...box.children].entries()) {
+    const uuid = el.dataset.uuid ?? '';
+    const nth = seen.get(uuid) ?? 0;
+    seen.set(uuid, nth + 1);
+    const r = el.getBoundingClientRect();
+    if (r.height && r.bottom > top) return { uuid, nth, index, offset: r.top - top };
+  }
+  return null;
+}
+
+function restoreAnchor(box, a) {
+  if (!a) return;
+  const children = [...box.children];
+  const el = (a.uuid && children.filter((x) => x.dataset.uuid === a.uuid)[a.nth]) || children[a.index];
+  if (el) box.scrollTop += el.getBoundingClientRect().top - box.getBoundingClientRect().top - a.offset;
+}
+
+function lastEventKey(box) {
+  const items = box._items ?? [];
+  const last = items[items.length - 1];
+  return `${items.length}:${last?.ev.uuid ?? ''}`;
+}
+
+function showNewBelow() {
+  const box = $('events');
+  if (box.scrollHeight - box.scrollTop - box.clientHeight < 40) return;
+  $('new-below').hidden = false;
+}
+
+function hideNewBelow() {
+  $('new-below').hidden = true;
+}
+
+// サブエージェントのやり取りを開いているときに、会話の上に出す帯
+let agentView = null;
+
+function renderAgentBanner(id, agentId, agentData) {
+  agentView = agentData;
+  const banner = $('agent-banner');
+  $('composer').hidden = !!agentId;
+  banner.hidden = !agentId;
+  if (!agentId) return banner.replaceChildren();
+  const a = (agentLists.get(id) ?? []).find((x) => x.agentId === agentId);
+  const meta = agentData?.meta ?? {};
+  const desc = a?.description ?? meta.description ?? agentId;
+  const facts = [a?.agentType ?? meta.agentType, a?.background ? 'バックグラウンド' : null,
+    a ? (a.running ? `動いています・${elapsed(a.start)}` : '終わりました') : null, a ? `ツール ${a.tools}` : null].filter(Boolean).join(' · ');
+  banner.replaceChildren(...[
+    h('button', { class: 'agent-back', onclick: () => openSession(id, { agent: '', focusTool: a?.toolUseId ?? meta.toolUseId ?? null }) }, '← 親の会話に戻る'),
+    h('span', { class: `agent-dot${a?.running ? ' running' : ''}` }),
+    h('span', { class: 'agent-banner-desc' }, `サブエージェント: ${desc}`),
+    h('span', { class: 'agent-meta' }, facts),
+    agentData ? null : h('span', { class: 'agent-meta' }, 'ログが見つかりません')].filter(Boolean));
 }
 
 function eventEl(uuid) {
@@ -518,7 +591,7 @@ function jumpTo(el) {
 
 function openAt(id, uuid) {
   showView('session');
-  return openSession(id, { focusUuid: uuid });
+  return openSession(id, { focusUuid: uuid, agent: '' });
 }
 
 async function reloadAll() {
@@ -533,17 +606,19 @@ async function reloadAll() {
 }
 
 // ---------- 自動の読み直し ----------
-const live = { list: false, session: false, busy: false };
+const live = { list: false, session: false, agents: false, busy: false };
 
 async function runLive() {
-  if (live.busy || document.hidden || !(live.list || live.session)) return;
+  if (live.busy || document.hidden || !(live.list || live.session || live.agents)) return;
   live.busy = true;
-  const { list, session } = live;
+  const { list, session, agents } = live;
   live.list = false;
   live.session = false;
+  live.agents = false;
   try {
     if (list) await loadList();
     if (session && state.s) await openSession(state.s, { reload: true });
+    else if (agents && state.s) await loadAgents(state.s);
   } catch (e) {
     console.error(e);
   } finally {
@@ -555,9 +630,11 @@ async function runLive() {
 function watchChanges() {
   const es = new EventSource('/api/events');
   es.addEventListener('message', (e) => {
-    const { ids, replies = [] } = JSON.parse(e.data);
+    const { ids, agentIds = [], replies = [] } = JSON.parse(e.data);
     live.list = true;
-    if (state.s && ids.includes(state.s)) live.session = true;
+    // サブエージェントのログが書き足されただけなら、親の会話は読み直さずに、サブエージェントの一覧だけ取り直す
+    if (state.s && (ids.includes(state.s) || (state.a && agentIds.includes(state.s)))) live.session = true;
+    else if (state.s && agentIds.includes(state.s)) live.agents = true;
     runLive();
     for (const r of replies) {
       announce({ kind: '返事', title: r.title, body: r.reply.text, tag: `reply-${r.id}`, open: () => openAt(r.id, r.reply.uuid) });
@@ -632,7 +709,7 @@ function isUnread(s) {
 // 開いていて画面が表に出ているセッションは、最後の返事まで読んだことにする
 function markSeen() {
   const s = current?.session;
-  if (!s || document.hidden || state.view === 'search' || !s.lastReply || s.lastReply.ts <= readAt(s.id)) return;
+  if (!s || document.hidden || state.view === 'search' || state.a || !s.lastReply || s.lastReply.ts <= readAt(s.id)) return;
   readState.at[s.id] = s.lastReply.ts;
   saveRead();
   refreshMarks(s.id);
@@ -1155,22 +1232,8 @@ function toolBody(ev, cwd) {
       // 動いている途中は結果が無く agentId も無いので、サブエージェントのログの meta.json から引く
       const agentId = ev.agentId ?? current?.agents?.find((a) => a.toolUseId === ev.id)?.agentId;
       if (agentId && current) {
-        const box = h('div', { class: 'subagent' });
-        box.dataset.agentId = agentId;
-        const btn = h('button', {
-          class: 'subagent-open',
-          onclick: async () => {
-            btn.disabled = true;
-            const res = await fetch(`/api/agent?session=${encodeURIComponent(current.session.id)}&agent=${encodeURIComponent(agentId)}`);
-            if (!res.ok) { btn.textContent = 'ログが見つかりません'; return; }
-            const d = await res.json();
-            btn.remove();
-            box.classList.add('loaded');
-            renderEvents(box, d.events, cwd, true);
-            if (findTerms.length) highlight(box, findTerms);
-          },
-        }, 'サブエージェントのやり取りを開く');
-        body.append(btn, box);
+        const sessionId = current.session.id;
+        body.append(h('button', { class: 'subagent-open', onclick: () => openSession(sessionId, { agent: agentId }) }, 'サブエージェントのやり取りを開く'));
       }
       break;
     }
@@ -1233,7 +1296,7 @@ function renderEvent(ev, cwd, nested = false) {
     user: ev.queued ? 'ユーザー（実行中に送信）' : 'ユーザー', assistant: 'Claude', thinking: '思考', system: `システム${ev.subtype ? `: ${ev.subtype}` : ''}`, meta: ev.compact ? '要約（compact）' : 'メタ',
   }[ev.kind] ?? ev.kind;
   // 巻き戻せるのは本体の会話の、ユーザーが送った発言だけ
-  const canRewind = !nested && ev.kind === 'user' && !ev.queued && ev.uuid;
+  const canRewind = !nested && !state.a && ev.kind === 'user' && !ev.queued && ev.uuid;
   el.append(h('div', { class: 'ev-label' }, h('span', {}, label), h('span', {}, fmtTime(ev.ts)),
     canRewind ? h('button', { class: 'rewind-btn', title: 'この発言より前に会話を戻し、この発言を入力欄に戻します', onclick: () => openRewind(ev) }, 'ここから巻き戻す') : null));
   const body = h('div', { class: 'body' });
@@ -1910,6 +1973,8 @@ async function showNewSession(s, cwd) {
   current = null;
   renderCwdNow();
   state.s = s.id;
+  state.a = '';
+  renderAgentBanner(s.id, '', null);
   writeHash();
   showView('session');
   $('session-head').replaceChildren(h('h2', {}, h('span', {}, '新しいセッション')), h('dl', { class: 'head-grid' }, h('dt', {}, '場所'), h('dd', {}, h('code', {}, cwd))));
@@ -2455,6 +2520,15 @@ function bind() {
   window.addEventListener('pagehide', () => flushMemo({ keepalive: true }));
   $('stop').addEventListener('click', stopRunner);
   $('wake').addEventListener('click', wakeRunner);
+  $('new-below').addEventListener('click', () => {
+    const box = $('events');
+    box.scrollTop = box.scrollHeight;
+    hideNewBelow();
+  });
+  $('events').addEventListener('scroll', () => {
+    const box = $('events');
+    if (!$('new-below').hidden && box.scrollHeight - box.scrollTop - box.clientHeight < 40) hideNewBelow();
+  });
   $('file-close').addEventListener('click', () => $('file-dialog').close());
   $('rewind-conv').addEventListener('click', () => runRewind(false));
   $('rewind-all').addEventListener('click', () => runRewind(true));

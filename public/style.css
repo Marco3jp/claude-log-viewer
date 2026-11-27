@@ -285,7 +285,6 @@ mark.current { background: var(--mark-current); outline: 2px solid var(--mark-cu
 .tool-body pre.err { color: var(--error); }
 .diff-old { background: color-mix(in srgb, var(--error) 12%, transparent) !important; }
 .diff-new { background: color-mix(in srgb, var(--bash) 14%, transparent) !important; }
-.subagent { margin: 8px 0 4px 6px; padding-left: 12px; border-left: 2px dashed var(--agent); }
 
 /* 続きを送る */
 /* Bash の cd で作業ディレクトリが移ったところ */
@@ -611,3 +610,16 @@ fieldset.review-conditions .settings-check { margin-bottom: 6px; font-size: 12.5
 .open-file { font-size: 11.5px; padding: 1px 8px; margin: 2px 0 6px; }
 .files li a { color: inherit; text-decoration: none; }
 .files li a:hover { color: var(--tool); text-decoration: underline; }
+
+/* サブエージェントのやり取りを独立して開いているときの帯 */
+.agent-banner { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 6px 20px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--agent) 10%, var(--panel)); font-size: 13px; }
+.agent-banner[hidden] { display: none; }
+.agent-banner-desc { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-back { font-size: 12px; padding: 1px 8px; }
+.agent-banner .agent-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.agent-banner .agent-dot.running { background: var(--primary); animation: agent-pulse 1.4s ease-in-out infinite; }
+.agent-chip.active { border-color: var(--agent); box-shadow: inset 0 0 0 1px var(--agent); }
+/* 読み直したときに末尾に新しい行が増えたら出す。押すと末尾へ移る */
+.session-body { position: relative; }
+.new-below { position: absolute; left: 24px; bottom: 14px; z-index: 5; border-radius: 999px; padding: 4px 14px; background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; box-shadow: 0 4px 14px rgb(0 0 0 / 18%); }
+.new-below[hidden] { display: none; }

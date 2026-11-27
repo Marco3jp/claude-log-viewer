@@ -226,9 +226,9 @@ setInterval(() => {
     others = next;
     for (const res of listeners) res.write(othersMessage());
   }
-  const { ids, replies } = takeChanges();
-  if (!ids.length) return;
-  const msg = `data: ${JSON.stringify({ ids, replies })}\n\n`;
+  const { ids, agentIds, replies } = takeChanges();
+  if (!ids.length && !agentIds.length) return;
+  const msg = `data: ${JSON.stringify({ ids, agentIds, replies })}\n\n`;
   for (const res of listeners) res.write(msg);
 }, POLL_MS);
 setInterval(() => syncSessionStatuses(sessionStatuses()), REVIEW_SYNC_MS);
