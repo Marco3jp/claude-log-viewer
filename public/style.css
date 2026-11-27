@@ -183,6 +183,8 @@ mark.current { background: var(--mark-current); outline: 2px solid var(--mark-cu
 .head-grid dt { color: var(--muted); }
 .head-grid dd { margin: 0; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; min-width: 0; word-break: break-all; }
 .head-grid code { background: var(--code); padding: 1px 5px; border-radius: 4px; }
+.cwd-now-label { color: var(--muted); }
+.head-grid code.cwd-now-path { background: color-mix(in srgb, var(--bash) 14%, var(--code)); }
 .files { font-size: 12px; }
 .files summary { cursor: pointer; color: var(--muted); }
 .files ul { margin: 4px 0; padding-left: 18px; max-height: 160px; overflow: auto; }
@@ -279,6 +281,12 @@ mark.current { background: var(--mark-current); outline: 2px solid var(--mark-cu
 .subagent { margin: 8px 0 4px 6px; padding-left: 12px; border-left: 2px dashed var(--agent); }
 
 /* 続きを送る */
+/* Bash の cd で作業ディレクトリが移ったところ */
+.ev-cwd { display: flex; gap: 8px; align-items: baseline; font-size: 12px; color: var(--bash); padding: 2px 10px; border-left: 2px dashed var(--bash); }
+.ev-cwd code { background: var(--code); padding: 0 5px; border-radius: 4px; word-break: break-all; color: var(--text); }
+.ev-cwd .ev-label { margin-left: auto; }
+.cwd-now { font-size: 12px; color: var(--muted); margin-bottom: 4px; word-break: break-all; }
+.cwd-now code { background: color-mix(in srgb, var(--bash) 14%, var(--code)); padding: 0 5px; border-radius: 4px; color: var(--text); }
 .composer { border-top: 1px solid var(--border); background: var(--panel); padding: 8px 20px 10px; flex-shrink: 0; }
 .composer-row { display: flex; gap: 8px; align-items: flex-end; }
 .composer-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -485,6 +493,7 @@ kbd {
 
 .hide-thinking .ev-thinking,
 .hide-bash .ev-bash,
+.hide-bash .ev-cwd,
 .hide-tool .ev-tool,
 .hide-mcp .ev-mcp,
 .hide-agent .ev-agent,

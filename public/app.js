@@ -468,6 +468,7 @@ async function openSession(id, { reload = false, focusUuid = null, focusTool = n
   const openAgents = new Set([...box.querySelectorAll('.subagent.loaded')].map((b) => b.dataset.agentId));
   current = data;
   renderHead(data);
+  renderCwdNow();
   renderEvents(box, data.events, data.session.cwd);
   if (!decisions.has(id)) loadDecisions(id);
   settleOutgoing(id, data.events);
@@ -505,7 +506,7 @@ function eventEl(uuid) {
 }
 
 function firstAfter(ts) {
-  const x = ($('events')._items ?? []).find((it) => it.ev.ts > ts && !['meta', 'system'].includes(it.ev.kind) && it.el.offsetParent !== null);
+  const x = ($('events')._items ?? []).find((it) => it.ev.ts > ts && !['meta', 'system', 'cwd'].includes(it.ev.kind) && it.el.offsetParent !== null);
   return x?.el ?? null;
 }
 
@@ -952,7 +953,8 @@ function renderHead(d) {
   const rows = [
     ['再開', h('code', {}, `claude --resume ${s.id}`), btn],
     ['期間', `${fmtRange(s.start, s.end)}　プロンプト ${s.prompts}・応答 ${s.turns}`],
-    ['場所', h('code', {}, s.cwd ?? '')],
+    ['場所', h('code', {}, s.cwd ?? ''),
+      s.lastCwd && s.lastCwd !== s.cwd ? [h('span', { class: 'cwd-now-label' }, '今は'), h('code', { class: 'cwd-now-path' }, cwdLabel(s.lastCwd, s.cwd))] : null],
   ];
   if (s.repos.length || s.branches.length) {
     rows.push(['リポジトリ',
@@ -994,6 +996,21 @@ function renderBookmarkButtons() {
     btn.title = s.bookmarked ? 'ブックマークを外す' : 'ブックマークする';
     btn.onclick = () => toggleBookmark(s.id, !s.bookmarked);
   }
+}
+
+// cd で移った先を、始めたディレクトリからの相対で出す
+function cwdLabel(p, base) {
+  if (base && p === base) return `${p}（始めたディレクトリ）`;
+  return base && p.startsWith(`${base}/`) ? `./${p.slice(base.length + 1)}` : p;
+}
+
+// 送る前に、Claude が最後にいたディレクトリが始めたディレクトリと違うことに気づけるようにする
+function renderCwdNow() {
+  const s = current?.session;
+  const moved = !!(s?.lastCwd && s.cwd && s.lastCwd !== s.cwd);
+  $('cwd-now').hidden = !moved;
+  $('cwd-now').replaceChildren(...(moved ? ['作業ディレクトリ: ', h('code', {}, cwdLabel(s.lastCwd, s.cwd)), `（始めたのは ${s.cwd}）`] : []));
+  $('cwd-now').title = moved ? 'Bash の cd で移っています。ビュワーから続きを送ると、Claude は始めたディレクトリで動き出します' : '';
 }
 
 function shortPath(p, cwd) {
@@ -1100,6 +1117,11 @@ function renderEvent(ev, cwd) {
   const cat = eventCategory(ev);
   const el = h('div', { class: `ev ev-${cat}` });
   if (ev.uuid) el.dataset.uuid = ev.uuid;
+  if (ev.kind === 'cwd') {
+    el.title = `${ev.from} から移りました`;
+    el.append(h('span', { class: 'cwd-label' }, '作業ディレクトリ →'), h('code', {}, cwdLabel(ev.text, cwd)), h('span', { class: 'ev-label' }, fmtTime(ev.ts, false)));
+    return el;
+  }
   if (ev.kind === 'tool') {
     const name = ev.category === 'mcp' ? `${ev.server} / ${ev.name.split('__').slice(2).join('__')}` : ev.name;
     const details = h('details', { class: 'tool' },
@@ -1591,6 +1613,7 @@ async function showNewSession(s, cwd) {
   if (state.s) drafts.set(state.s, $('msg').value);
   $('msg').value = '';
   current = null;
+  renderCwdNow();
   state.s = s.id;
   writeHash();
   showView('session');
